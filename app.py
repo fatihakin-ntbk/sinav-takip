@@ -74,6 +74,24 @@ def init_db():
         logo_base64 TEXT
     )''')
 
+    # Kullanıcılar Tablosu
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS kullanicilar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kullanici_adi TEXT UNIQUE,
+        sifre TEXT,
+        rol TEXT
+    )''')
+
+    # Varsayılan Hesapları Oluştur (Eğer yoksa)
+    cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'admin'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('admin', 'admin123', 'admin')")
+
+    cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'ogretmen'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('ogretmen', 'ogretmen123', 'ogretmen')")
+
     conn.commit()
     conn.close()
 
@@ -94,7 +112,6 @@ def get_kurum_bilgileri():
 def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     cursor = conn.cursor()
     
-    # 1. Öğrencinin girdiği EN SON sınavın ID'sini bul
     cursor.execute('''
         SELECT s.sinav_id 
         FROM sinavlar s
@@ -109,7 +126,6 @@ def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     
     last_sinav_id = last_exam[0]
     
-    # 2. EN SON sınavında da hâlâ yanlış yaptığı konular (Aktif Eksikler)
     cursor.execute('''
         SELECT konu_kazanim, COUNT(*) as toplam_tekrar
         FROM ogrenci_eksikleri
@@ -125,7 +141,6 @@ def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     
     aktif_eksikler = cursor.fetchall()
     
-    # 3. Geçmişte yanlış yapıp SON SINAVDA DOĞRU YAPAN (Düzeltilen) konular
     cursor.execute('''
         SELECT DISTINCT konu_kazanim
         FROM ogrenci_eksikleri
@@ -141,18 +156,13 @@ def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     
     return aktif_eksikler, tamamlanan_konular
 
-# --- ÖĞRENCİ HTML KARNE ÜRETİCİ (TAM GENİŞLİKLİ YATAY DÜZEN) ---
+# --- ÖĞRENCİ HTML KARNE ÜRETİCİ ---
 def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, student_name, fig_img_base64, veli_notu=""):
     last_row = df_ogr.iloc[-1]
     kurum_adi, logo_base64 = get_kurum_bilgileri()
     
-    # Logo HTML
-    if logo_base64:
-        logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="max-height: 75px; max-width: 220px; object-fit: contain;">'
-    else:
-        logo_html = f'<div style="font-size:22px; font-weight:bold; color:#1a365d;">🏛️ {kurum_adi}</div>'
+    logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="max-height: 70px; object-fit: contain;">' if logo_base64 else f'<div style="font-size:20px; font-weight:bold; color:#1a365d;">🏛️ {kurum_adi}</div>'
 
-    # Veli Notu HTML
     not_html = ""
     if veli_notu.strip():
         not_html = f"""
@@ -162,7 +172,6 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         </div>
         """
 
-    # Sınav Geçmiş Tablosu Rows
     table_rows = ""
     for _, r in df_ogr.iterrows():
         table_rows += f"""
@@ -179,32 +188,29 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         </tr>
         """
         
-    # Aktif Eksikler HTML (Sol Sütun)
     eksik_rows = ""
     if aktif_eksikler:
         for konu, tekrar in aktif_eksikler:
             badge_color = "#e53e3e" if tekrar > 1 else "#dd6b20"
-            badge_text = f"{tekrar} Sınavdır Yanlış"
             eksik_rows += f"""
-            <div style="background:#fff5f5; border-left:4px solid {badge_color}; padding:8px 10px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:600; color:#2d3748; font-size:12px;">📌 {konu}</span>
-                <span style="background:{badge_color}; color:white; font-size:10px; padding:2px 6px; border-radius:10px; font-weight:bold;">{badge_text}</span>
+            <div style="background:#fff5f5; border-left:4px solid {badge_color}; padding:6px 10px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:600; color:#2d3748; font-size:11px;">📌 {konu}</span>
+                <span style="background:{badge_color}; color:white; font-size:9px; padding:2px 6px; border-radius:10px; font-weight:bold;">{tekrar} Sınavda Yanlış</span>
             </div>
             """
     else:
-        eksik_rows = "<p style='color:#38a169; font-weight:bold; font-size:12px; margin:0;'>🎉 En son sınavda tespit edilen aktif eksik konu bulunmuyor!</p>"
+        eksik_rows = "<p style='color:#38a169; font-weight:bold; font-size:12px;'>🎉 Aktif eksik konu bulunmuyor!</p>"
 
-    # Tamamlanan/Düzeltilen Konular HTML (Sağ Sütun)
     tamamlanan_rows = ""
     if tamamlanan_konular:
         for konu in tamamlanan_konular:
             tamamlanan_rows += f"""
-            <div style="background:#f0fff4; border-left:4px solid #38a169; padding:8px 10px; margin-bottom:6px; border-radius:4px; font-size:12px; color:#276749; font-weight:600;">
-                ✅ {konu} <span style="font-size:10px; font-weight:normal; color:#48bb78;">(Son sınavda düzeltildi)</span>
+            <div style="background:#f0fff4; border-left:4px solid #38a169; padding:6px 10px; margin-bottom:6px; border-radius:4px; font-size:11px; color:#276749; font-weight:600;">
+                ✅ {konu}
             </div>
             """
     else:
-        tamamlanan_rows = "<p style='color:#718096; font-size:12px; margin:0;'>Henüz önceden eksik olup sonradan kazanılan konu kaydı bulunmuyor.</p>"
+        tamamlanan_rows = "<p style='color:#718096; font-size:11px;'>Henüz kazanılan konu kaydı yok.</p>"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -213,37 +219,26 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         <meta charset="UTF-8">
         <title>{student_name} - Öğrenci Analiz Karnesi</title>
         <style>
-            @page {{ size: A4; margin: 8mm; }}
-            * {{ box-sizing: border-box; }}
-            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f7fafc; color: #2d3748; margin: 0; padding: 10px; }}
-            .card {{ background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; width: 100%; }}
-            .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3182ce; padding-bottom: 12px; margin-bottom: 15px; }}
+            @page {{ size: A4 portrait; margin: 10mm; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #fff; color: #2d3748; margin: 0; padding: 0; }}
+            .card {{ background: white; border-radius: 8px; padding: 10px; }}
+            .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3182ce; padding-bottom: 10px; margin-bottom: 15px; }}
             .header-info h1 {{ margin: 0; color: #1a365d; font-size: 20px; }}
             .header-info p {{ margin: 2px 0 0 0; color: #718096; font-size: 12px; }}
-            
             .metrics {{ display: flex; gap: 10px; margin-bottom: 15px; }}
             .metric-box {{ flex: 1; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 6px; padding: 8px; text-align: center; }}
             .metric-title {{ font-size: 10px; color: #2b6cb0; font-weight: bold; text-transform: uppercase; }}
             .metric-value {{ font-size: 16px; font-weight: bold; color: #2c5282; margin-top: 2px; }}
-            
             .section-title {{ font-size: 13px; font-weight: bold; color: #2d3748; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }}
-            
-            /* ÜST BÖLÜM: YATAY TAM GENİŞLİKLİ GRAFİK */
-            .chart-full-width {{ width: 100%; margin-bottom: 15px; background: #fafafa; border: 1px solid #edf2f7; border-radius: 8px; padding: 10px; text-align: center; }}
-            .chart-full-width img {{ width: 100%; max-height: 230px; object-fit: contain; }}
-            
-            /* ALT BÖLÜM: YAN YANA İKİ SÜTUN */
-            .two-column-grid {{ display: flex; gap: 15px; margin-bottom: 15px; }}
-            .col-half {{ flex: 1; background: #fafafa; border: 1px solid #edf2f7; border-radius: 8px; padding: 12px; }}
-            
             table {{ width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11px; }}
             th {{ background-color: #2b6cb0; color: white; padding: 6px; text-align: left; }}
             td {{ padding: 6px; border-bottom: 1px solid #e2e8f0; }}
             tr:nth-child(even) {{ background-color: #f7fafc; }}
-            
+            .grafik-container {{ width: 100%; margin-bottom: 15px; text-align: center; }}
+            .listeler-container {{ display: flex; gap: 15px; margin-bottom: 15px; }}
+            .sutun {{ flex: 1; }}
             @media print {{
                 body {{ background: white; padding: 0; }}
-                .card {{ box-shadow: none; border: none; padding: 0; }}
                 .no-print {{ display: none; }}
             }}
         </style>
@@ -254,66 +249,40 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         </div>
 
         <div class="card">
-            <!-- HEADER -->
             <div class="header">
-                <div>
-                    {logo_html}
-                </div>
+                <div>{logo_html}</div>
                 <div class="header-info" style="text-align:right;">
                     <h1>🎓 {student_name.upper()}</h1>
-                    <p>Bireysel TYT Deneme Sınavı Gelişim & Analiz Karnesi</p>
-                    <span style="background:#e2e8f0; padding:2px 8px; border-radius:12px; font-weight:bold; color:#4a5568; font-size:11px;">Sınıf: {last_row['sinif']}</span>
+                    <p>TYT Deneme Sınavı Gelişim & Analiz Karnesi | Sınıf: {last_row['sinif']}</p>
                 </div>
             </div>
 
-            <!-- METRİKLER -->
             <div class="metrics">
-                <div class="metric-box">
-                    <div class="metric-title">Son TYT Puanı</div>
-                    <div class="metric-value">{last_row['tyt_puan']:.2f}</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-title">Son Kurum Sırası</div>
-                    <div class="metric-value">{int(last_row['kurum_sirasi'])}</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-title">Son Toplam Net</div>
-                    <div class="metric-value">{last_row['toplam_net']:.2f}</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-title">Girdiği Sınav Sayısı</div>
-                    <div class="metric-value">{len(df_ogr)}</div>
-                </div>
+                <div class="metric-box"><div class="metric-title">Son TYT Puanı</div><div class="metric-value">{last_row['tyt_puan']:.2f}</div></div>
+                <div class="metric-box"><div class="metric-title">Son Kurum Sırası</div><div class="metric-value">{int(last_row['kurum_sirasi'])}</div></div>
+                <div class="metric-box"><div class="metric-title">Son Toplam Net</div><div class="metric-value">{last_row['toplam_net']:.2f}</div></div>
+                <div class="metric-box"><div class="metric-title">Girdiği Sınav Sayısı</div><div class="metric-value">{len(df_ogr)}</div></div>
             </div>
 
-            <!-- ÜST BÖLÜM: ENLEMELİNE TAM KAPLAYAN GRAFİK -->
-            <div class="chart-full-width">
-                <div class="section-title" style="text-align:left;">📈 Sınav Performans & Net Gelişim Grafiği</div>
-                <img src="data:image/png;base64,{fig_img_base64}">
+            <div class="grafik-container">
+                <div class="section-title">📈 Net Gelişim Grafiği</div>
+                <img src="data:image/png;base64,{fig_img_base64}" style="width:100%; max-height:220px; object-fit:contain; border-radius:6px; border:1px solid #e2e8f0;">
             </div>
 
-            <!-- ALT BÖLÜM: YAN YANA İKİ SÜTUN HAKKİNDA -->
-            <div class="two-column-grid">
-                <!-- Sol Sütun: Aktif Eksikler -->
-                <div class="col-half" style="border-top: 3px solid #e53e3e;">
-                    <div class="section-title" style="color: #c53030;">⚠️ Aktif Müdahale Gereken Konular</div>
-                    <div style="font-size: 10px; color: #718096; margin-bottom: 8px;">(Son sınavda da hâlâ yanlış yapılanlar)</div>
+            <div class="listeler-container">
+                <div class="sutun">
+                    <div class="section-title">⚠️ Aktif Eksik Konular</div>
                     {eksik_rows}
                 </div>
-
-                <!-- Sağ Sütun: Tamamlanan/Kazanılan Konular -->
-                <div class="col-half" style="border-top: 3px solid #38a169;">
-                    <div class="section-title" style="color: #276749;">🎉 Başarıyla Halledilen Konular</div>
-                    <div style="font-size: 10px; color: #718096; margin-bottom: 8px;">(Önceki sınavlarda yanlış yapılıp son sınavda çözülenler)</div>
+                <div class="sutun">
+                    <div class="section-title">🎉 Başarıyla Halledilen Konular</div>
                     {tamamlanan_rows}
                 </div>
             </div>
 
-            <!-- REHBERLİK NOTU -->
             {not_html}
 
-            <!-- SINAV GEÇMİŞ TABLOSU -->
-            <div style="margin-top:12px;">
+            <div style="margin-top:15px;">
                 <div class="section-title">📋 Sınav Katılım & Geçmiş Tablosu</div>
                 <table>
                     <thead>
@@ -329,9 +298,7 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
                             <th>Sıra</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {table_rows}
-                    </tbody>
+                    <tbody>{table_rows}</tbody>
                 </table>
             </div>
         </div>
@@ -340,11 +307,58 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
     """
     return html_content
 
-# --- YAN MENÜ ---
-st.sidebar.title("📌 Menü")
-secim = st.sidebar.radio(
-    "İşlem Seçiniz:", 
-    [
+# --- OTURUM YÖNETİMİ (LOGIN / LOGOUT) ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+    st.session_state['role'] = None
+    st.session_state['user_info'] = None
+
+def login_screen():
+    st.markdown("<h2 style='text-align: center;'>🏛️ Sınav Takip & Analiz Portalı Girişi</h2>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            username = st.text_input("Kullanıcı Adı:")
+            password = st.text_input("Şifre:", type="password")
+            submit = st.form_submit_button("Giriş Yap", type="primary", use_container_width=True)
+
+            if submit:
+                conn = sqlite3.connect("sinav_takip.db")
+                cursor = conn.cursor()
+                cursor.execute("SELECT rol FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", (username.strip(), password.strip()))
+                user = cursor.fetchone()
+                conn.close()
+
+                if user:
+                    st.session_state['logged_in'] = True
+                    st.session_state['role'] = user[0]  # 'admin' veya 'ogretmen'
+                    st.session_state['user_info'] = {'username': username}
+                    st.success("Giriş başarılı!")
+                    st.rerun()
+                else:
+                    st.error("Hatalı kullanıcı adı veya şifre!")
+
+if not st.session_state['logged_in']:
+    login_screen()
+    st.stop()
+
+# --- YAN MENÜ VE ÇIKIŞ ---
+st.sidebar.markdown(f"### 👤 Kullanıcı: **{st.session_state['user_info']['username'].upper()}**")
+st.sidebar.markdown(f"🔑 Rol: **{'👑 Yönetici (Admin)' if st.session_state['role'] == 'admin' else '👨‍🏫 Öğretmen'}**")
+
+if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
+    st.session_state['logged_in'] = False
+    st.session_state['role'] = None
+    st.session_state['user_info'] = None
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# --- MENÜ LİSTESİ (ROL BAZLI GÖRÜNÜR) ---
+if st.session_state['role'] == 'admin':
+    menu_options = [
         "📤 Yeni Sınav Yükle", 
         "📊 Öğrenci Karneleri & Analiz", 
         "🏫 Okul Genel Durumu & Dereceler", 
@@ -352,13 +366,19 @@ secim = st.sidebar.radio(
         "⚙️ Kurum Ayarları & Logo",
         "🗑️ Sınav Yönetimi & Silme"
     ]
-)
+else:
+    # Öğretmen Rolünün Görebileceği Sayfalar
+    menu_options = [
+        "📊 Öğrenci Karneleri & Analiz", 
+        "🏫 Okul Genel Durumu & Dereceler", 
+        "🔥 Okul Konu/Kazanım Analizi"
+    ]
 
-# --- 1. MENÜ: YENİ SINAV YÜKLE ---
-if secim == "📤 Yeni Sınav Yükle":
+secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
+
+# --- 1. MENÜ: YENİ SINAV YÜKLE (SADECE ADMİN) ---
+if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     st.title("📤 Yeni Deneme Sınavı Yükleme Paneli")
-    st.write("Excel ve PDF dosyalarınızı yükleyerek veritabanına aktarın.")
-
     col1, col2 = st.columns(2)
     with col1:
         sinav_adi = st.text_input("Sınav Adı", placeholder="Örn: 345 TYT Genel - Mart 2026")
@@ -430,23 +450,21 @@ if secim == "📤 Yeni Sınav Yükle":
 
                 conn.commit()
                 conn.close()
-                st.success(f"🎉 '{sinav_adi}' başarıyla yüklendi ve işlendi!")
+                st.success(f"🎉 '{sinav_adi}' başarıyla yüklendi!")
 
             except Exception as e:
                 st.error(f"Hata oluştu: {e}")
-        else:
-            st.warning("Lütfen tüm alanları doldurun ve iki dosyayı da yükleyin!")
 
-# --- 2. MENÜ: ÖĞRENCİ KARNELERİ ---
+# --- 2. MENÜ: ÖĞRENCİ KARNELERİ (ADMİN & ÖĞRETMEN) ---
 elif secim == "📊 Öğrenci Karneleri & Analiz":
-    st.title("🎓 Bireysel Öğrenci Analiz Karnesi")
+    st.title("🎓 Öğrenci Analiz Karnesi")
 
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
 
     cursor.execute("SELECT DISTINCT sinif FROM ogrenci_sonuclari ORDER BY sinif ASC")
     siniflar = ["Tüm Sınıflar"] + [s[0] for s in cursor.fetchall() if s[0]]
-    secilen_sinif = st.selectbox("Sınıf Seçin (Filtreleme):", siniflar)
+    secilen_sinif = st.selectbox("Sınıf Seçin:", siniflar)
 
     if secilen_sinif == "Tüm Sınıflar":
         cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
@@ -454,10 +472,9 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
         cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari WHERE sinif = ? ORDER BY ogrenci_adi ASC", (secilen_sinif,))
     
     ogrenciler = cursor.fetchall()
-
     if ogrenciler:
         ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
-        secilen_ogr_adi = st.selectbox("Aramak İçin Öğrenci Seçin veya Yazın:", list(ogr_dict.keys()))
+        secilen_ogr_adi = st.selectbox("Öğrenci Seçin:", list(ogr_dict.keys()))
         secilen_norm = ogr_dict[secilen_ogr_adi]
 
         query = '''
@@ -481,12 +498,13 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
 
             st.markdown("---")
 
-            grafik_turu = st.radio("Grafik Türü Seçiniz:", ["Toplam Net Gelişimi", "Ders Bazlı Net Dağılımı"], horizontal=True)
+            grafik_turu = st.radio("Grafik Türü:", ["Toplam Net Gelişimi", "Ders Bazlı Net Dağılımı"], horizontal=True)
 
-            # --- YATAY GENİŞ GRAFİK ÜRETİMİ (12x4.5 inç) ---
-            fig, ax = plt.subplots(figsize=(12, 4.5))
+            c1, c2 = st.columns([1.1, 0.9])
+            
+            fig, ax = plt.subplots(figsize=(7, 3.5))
             if grafik_turu == "Toplam Net Gelişimi":
-                ax.plot(df_ogr['sinav_adi'], df_ogr['toplam_net'], marker='o', color='#2b5797', linewidth=2.5, label="Toplam Net")
+                ax.plot(df_ogr['sinav_adi'], df_ogr['toplam_net'], marker='o', color='#2b5797', linewidth=2.5)
                 for i, txt in enumerate(df_ogr['toplam_net']):
                     ax.annotate(f"{txt:.1f}", (df_ogr['sinav_adi'][i], df_ogr['toplam_net'][i]+2), ha='center', fontweight='bold')
                 ax.set_ylim(0, 120)
@@ -500,33 +518,28 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
 
             ax.set_ylabel("Net")
             ax.grid(True, linestyle='--', alpha=0.5)
-            plt.xticks(rotation=10)
+            plt.xticks(rotation=15)
 
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+            plt.savefig(buf, format='png', bbox_inches='tight')
             buf.seek(0)
             fig_img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
-            # EKRAN GÖRÜNÜMÜ
-            st.subheader("📈 Net Gelişim Grafiği")
-            st.pyplot(fig)
-
-            # Akıllı/Dinamik Eksik Hesabı
-            aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(conn, secilen_norm)
-
-            c1, c2 = st.columns(2)
             with c1:
-                st.subheader("⚠️ Acil Müdahale Gereken Konular")
-                st.caption("(Son sınavda da hâlâ yanlış yapılan konular)")
-                if aktif_eksikler:
-                    for konu, tekrar in aktif_eksikler:
-                        st.error(f"📌 **{konu}** ({tekrar} Sınavda Yanlış Yapıldı)")
-                else:
-                    st.success("🎉 En son sınavda tespit edilen aktif eksik konu bulunmuyor!")
+                st.subheader("📈 Net Gelişim Grafiği")
+                st.pyplot(fig)
 
             with c2:
+                aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(conn, secilen_norm)
+
+                st.subheader("⚠️ Acil Müdahale Gereken Konular")
+                if aktif_eksikler:
+                    for konu, tekrar in aktif_eksikler:
+                        st.error(f"📌 **{konu}** ({tekrar} Sınavda Yanlış)")
+                else:
+                    st.success("🎉 Aktif eksik konu bulunmuyor!")
+
                 st.subheader("🎉 Başarıyla Halledilen Konular")
-                st.caption("(Önceki sınavlarda yanlış yapılıp son sınavda düzeltilenler)")
                 if tamamlanan_konular:
                     for konu in tamamlanan_konular:
                         st.success(f"✅ **{konu}** (Son sınavda başarıyla çözüldü)")
@@ -534,20 +547,12 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
                     st.info("Henüz kazanılan konu kaydı bulunmuyor.")
 
             st.markdown("---")
-            
-            # --- ÖĞRETMEN / REHBERLİK NOTU VE İNDİRME ---
-            st.subheader("🖨️ Karne Raporu İndirme")
-            
-            veli_notu = st.text_area(
-                "✍️ Rehberlik / Öğretmen Veli Değerlendirme Notu (İsteğe Bağlı):", 
-                placeholder="Örn: Öğrencimiz matematik netlerinde düzenli bir artış gösteriyor. Problem çözme ve paragraf çalışmalarına ağırlık verilmesi önerilmektedir...",
-                height=80
-            )
+            veli_notu = st.text_area("✍️ Rehberlik / Öğretmen Veli Değerlendirme Notu (Karnede Görünür):", height=80)
 
             html_report = generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, secilen_ogr_adi, fig_img_base64, veli_notu)
             
             st.download_button(
-                label=f"📄 {secilen_ogr_adi} Özel Karne Raporunu İndir (PDF/HTML)",
+                label=f"📄 {secilen_ogr_adi} Karne Raporunu İndir (PDF/HTML)",
                 data=html_report,
                 file_name=f"{secilen_norm}_Gelisim_Karnesi.html",
                 mime="text/html",
@@ -555,15 +560,14 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
                 use_container_width=True
             )
 
-            st.markdown("---")
             st.subheader("📋 Sınav Geçmiş Tablosu")
             st.dataframe(df_ogr[['sinav_adi', 'tarih', 'turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'toplam_net', 'tyt_puan']], use_container_width=True)
-
     else:
-        st.info("Seçilen sınıfta öğrenci bulunamadı.")
+        st.warning("Bu kriterlere uygun öğrenci bulunamadı.")
+
     conn.close()
 
-# --- 3. MENÜ: GENEL OKUL DURUMU ---
+# --- 3. MENÜ: GENEL OKUL DURUMU (ADMİN & ÖĞRETMEN) ---
 elif secim == "🏫 Okul Genel Durumu & Dereceler":
     st.title("🏫 Okul Genel Başarı Analizi ve Derece Listeleri")
     conn = sqlite3.connect("sinav_takip.db")
@@ -614,14 +618,11 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler":
             file_name=f"{secilen_sinav}_{secilen_sinif}_Derece_Listesi.csv",
             mime="text/csv"
         )
-    else:
-        st.info("Henüz veritabanında sınav bulunmuyor.")
     conn.close()
 
-# --- 4. MENÜ: OKUL KONU ANALİZİ ---
+# --- 4. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
 elif secim == "🔥 Okul Konu/Kazanım Analizi":
     st.title("🔥 Okul & Sınıf Geneli En Çok Yanlış Yapılan Konular")
-    st.write("Okul genelinde öğrencilerin en çok zorlandığı ilk 10 konuyu tespit ederek toplu etütler planlayabilirsiniz.")
 
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
@@ -645,32 +646,22 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
         ORDER BY COUNT(*) DESC LIMIT 10
         '''
         df_konu = pd.read_sql_query(query, conn)
-    elif secilen_sinav != "Tüm Sınavlar" and secilen_sinif == "Tüm Sınıflar":
-        query = '''
-        SELECT oe.konu_kazanim as 'Konu / Kazanım', COUNT(*) as 'Yanlış/Boş Sayısı'
-        FROM ogrenci_eksikleri oe
-        JOIN sinavlar s ON oe.sinav_id = s.sinav_id
-        WHERE s.sinav_adi = ?
-        GROUP BY oe.konu_kazanim
-        ORDER BY COUNT(*) DESC LIMIT 10
-        '''
-        df_konu = pd.read_sql_query(query, conn, params=(secilen_sinav,))
     else:
         query = '''
         SELECT oe.konu_kazanim as 'Konu / Kazanım', COUNT(*) as 'Yanlış/Boş Sayısı'
         FROM ogrenci_eksikleri oe
         JOIN sinavlar s ON oe.sinav_id = s.sinav_id
         JOIN ogrenci_sonuclari os ON (os.sinav_id = oe.sinav_id AND os.ogrenci_adi_norm = oe.ogrenci_adi_norm)
-        WHERE (s.sinav_adi = ? OR ? = 'Tüm Sınavlar') AND os.sinif = ?
+        WHERE (s.sinav_adi = ? OR ? = 'Tüm Sınavlar') AND (os.sinif = ? OR ? = 'Tüm Sınıflar')
         GROUP BY oe.konu_kazanim
         ORDER BY COUNT(*) DESC LIMIT 10
         '''
-        df_konu = pd.read_sql_query(query, conn, params=(secilen_sinav, secilen_sinav, secilen_sinif))
+        df_konu = pd.read_sql_query(query, conn, params=(secilen_sinav, secilen_sinav, secilen_sinif, secilen_sinif))
 
     if not df_konu.empty:
         c1, c2 = st.columns([1.2, 0.8])
         with c1:
-            st.subheader("📊 En Çok Yanlış Yapılan İlk 10 Konu (Grafik)")
+            st.subheader("📊 En Çok Yanlış Yapılan İlk 10 Konu")
             fig, ax = plt.subplots(figsize=(7, 4))
             ax.barh(df_konu['Konu / Kazanım'], df_konu['Yanlış/Boş Sayısı'], color='#e74c3c')
             ax.invert_yaxis()
@@ -681,15 +672,12 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
         with c2:
             st.subheader("📋 Detaylı Konu Listesi")
             st.dataframe(df_konu, use_container_width=True)
-    else:
-        st.info("Seçilen kriterlere uygun veri bulunamadı.")
 
     conn.close()
 
-# --- 5. MENÜ: KURUM AYARLARI VE LOGO ---
-elif secim == "⚙️ Kurum Ayarları & Logo":
+# --- 5. MENÜ: KURUM AYARLARI VE LOGO (SADECE ADMİN) ---
+elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
     st.title("⚙️ Kurum ve Logo Ayarları")
-    st.write("Buradan yükleyeceğiniz kurum logosu ve kurum adı, basılan **tüm öğrenci karnelerinde** kalıcı olarak otomatik kullanılır.")
 
     mevcut_adi, mevcut_logo = get_kurum_bilgileri()
 
@@ -717,18 +705,16 @@ elif secim == "⚙️ Kurum Ayarları & Logo":
 
             conn.commit()
             conn.close()
-            st.success("✅ Kurum logosu ve bilgileri başarıyla veritabanına kaydedildi!")
+            st.success("✅ Kaydedildi!")
             st.rerun()
 
     with col2:
-        st.subheader("🖼️ Şu Anki Kayıtlı Logo / Başlık")
+        st.subheader("🖼️ Kayıtlı Logo")
         if mevcut_logo:
-            st.image(base64.b64decode(mevcut_logo), width=250, caption="Sistemde Kayıtlı Olan Resmi Logo")
-        else:
-            st.warning("Henüz özel bir logo yüklenmedi. Varsayılan metin başlığı kullanılıyor.")
+            st.image(base64.b64decode(mevcut_logo), width=220)
 
-# --- 6. MENÜ: SINAV SİLME ---
-elif secim == "🗑️ Sınav Yönetimi & Silme":
+# --- 6. MENÜ: SINAV SİLME (SADECE ADMİN) ---
+elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
     st.title("🗑️ Sınav Yönetim ve Silme Paneli")
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
@@ -737,24 +723,18 @@ elif secim == "🗑️ Sınav Yönetimi & Silme":
     sinavlar = cursor.fetchall()
 
     if sinavlar:
-        st.subheader("📋 Kayıtlı Sınavlar")
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        
-        silinecek_sinav_label = st.selectbox("Silmek İstediğiniz Sınavı Seçin:", list(sinav_dict.keys()))
-        silinecek_id = sinav_dict[silinecek_sinav_label]
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
+        silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
             try:
                 cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (silinecek_id,))
                 cursor.execute("DELETE FROM ogrenci_eksikleri WHERE sinav_id = ?", (silinecek_id,))
                 cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (silinecek_id,))
-                
                 conn.commit()
-                st.success(f"✅ '{silinecek_sinav_label}' başarıyla silindi.")
+                st.success("✅ Sınav silindi.")
                 st.rerun()
             except Exception as e:
-                st.error(f"Silme hatası: {e}")
-    else:
-        st.info("Kayıtlı sınav yok.")
-
+                st.error(f"Hata: {e}")
     conn.close()
