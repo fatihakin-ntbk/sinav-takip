@@ -935,7 +935,7 @@ elif secim == "📚 Ödevlerim & Ödev Durumu" and st.session_state['role'] in [
                     color = 'background-color: #fed7d7; color: #742a2a; font-weight: bold;'
                 return color
 
-            st.dataframe(df_my_odev.style.applymap(highlight_durum, subset=['Durum']), use_container_width=True)
+            st.dataframe(df_my_odev.style.map(highlight_durum, subset=['Durum']), use_container_width=True)
         else:
             st.info("Henüz tarafınıza atanmış bir ödev bulunmuyor.")
         conn.close()
