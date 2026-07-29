@@ -74,7 +74,7 @@ def init_db():
         logo_base64 TEXT
     )''')
 
-    # Kullanıcılar Tablosu (ogrenci_adi_norm sütunu eklendi)
+    # Kullanıcılar Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS kullanicilar (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -455,6 +455,35 @@ if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
 
 st.sidebar.markdown("---")
 
+# --- KULLANICI KENDİ ŞİFRESİNİ DEĞİŞTİRME SEKMESİ (SIDEBAR) ---
+with st.sidebar.expander("🔒 Şifremi Değiştir"):
+    with st.form("change_password_form"):
+        old_pass = st.text_input("Mevcut Şifre:", type="password")
+        new_pass = st.text_input("Yeni Şifre:", type="password")
+        confirm_pass = st.text_input("Yeni Şifre (Tekrar):", type="password")
+        submit_pass = st.form_submit_button("Şifreyi Güncelle")
+
+        if submit_pass:
+            if not old_pass or not new_pass:
+                st.error("Lütfen alanları doldurun.")
+            elif new_pass != confirm_pass:
+                st.error("Yeni şifreler eşleşmiyor!")
+            else:
+                conn = sqlite3.connect("sinav_takip.db")
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", 
+                               (st.session_state['user_info']['username'], old_pass.strip()))
+                usr = cursor.fetchone()
+                if usr:
+                    cursor.execute("UPDATE kullanicilar SET sifre = ? WHERE id = ?", (new_pass.strip(), usr[0]))
+                    conn.commit()
+                    st.success("✅ Şifreniz başarıyla değiştirildi!")
+                else:
+                    st.error("Mevcut şifreniz yanlış.")
+                conn.close()
+
+st.sidebar.markdown("---")
+
 # --- ROL BAZLI MENÜ OLUŞTURMA ---
 if st.session_state['role'] == 'admin':
     menu_options = [
@@ -746,6 +775,28 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
                 st.warning("Lütfen kullanıcı adı ve şifre alanlarını doldurun.")
 
         st.markdown("---")
+        st.subheader("🔑 Unutulan Şifreyi Sıfırlama / Güncelleme")
+        
+        cursor.execute("SELECT kullanici_adi, rol FROM kullanicilar WHERE rol IN ('ogrenci', 'veli') ORDER BY kullanici_adi ASC")
+        kayitli_kullanicilar = cursor.fetchall()
+        
+        if kayitli_kullanicilar:
+            c_u1, c_u2 = st.columns(2)
+            with c_u1:
+                sifre_reset_user = st.selectbox("Şifresi Değiştirilecek Kullanıcı:", [f"{k[0]} ({k[1]})" for k in kayitli_kullanicilar])
+            with c_u2:
+                sifre_reset_newpass = st.text_input("Yeni Şifre Belirle:", type="password", key="reset_pass")
+
+            if st.button("🔄 Şifreyi Güncelle", type="primary"):
+                if sifre_reset_newpass:
+                    target_username = sifre_reset_user.split(" (")[0]
+                    cursor.execute("UPDATE kullanicilar SET sifre = ? WHERE kullanici_adi = ?", (sifre_reset_newpass.strip(), target_username))
+                    conn.commit()
+                    st.success(f"✅ **{target_username}** kullanıcısının şifresi başarıyla güncellendi!")
+                else:
+                    st.warning("Lütfen yeni şifreyi girin.")
+
+        st.markdown("---")
         st.subheader("📋 Sistemde Kayıtlı Kullanıcı Hesapları")
         
         users_df = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm FROM kullanicilar WHERE rol IN ('ogrenci', 'veli')", conn)
@@ -812,7 +863,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
     if sinavlar:
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(silinecek_label if 'silinecek_label' in locals() else sinav_dict.keys()))
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
         silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
