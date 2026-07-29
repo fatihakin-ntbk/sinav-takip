@@ -84,7 +84,7 @@ def init_db():
         ogrenci_adi_norm TEXT
     )''')
 
-    # Öğrenci Hedefleri Tablosu (YENİ EKLENDİ)
+    # Öğrenci Hedefleri Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_hedefleri (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,6 +176,38 @@ def get_ogrenci_hedef(ogrenci_norm_adi):
         return {"bolum": row[0], "net": row[1], "puan": row[2]}
     return None
 
+# --- YENİ EKLENEN: AKILLI ÇALIŞMA PROGRAMI JENERATÖRÜ ---
+def generate_ai_study_plan(aktif_eksikler):
+    if not aktif_eksikler:
+        return {
+            "mesaj": "🎉 Harika durumdasın! Aktif eksik konun bulunmuyor. Mevcut netlerini korumak için Genel Deneme ve Soru Bankası tekrarı yapmalısın.",
+            "program": []
+        }
+    
+    # Eksikleri kritiklik seviyesine göre sırala
+    sorted_eksikler = sorted(aktif_eksikler, key=lambda x: x[1], reverse=True)
+    
+    plan = []
+    for idx, (konu, tekrar) in enumerate(sorted_eksikler[:4]):  # En acil 4 konu
+        if tekrar >= 2:
+            oncelik = "🔴 YÜKSEK ÖNCELİK (Kritik Eksik)"
+            hedef_soru = 120
+            tavsiye = "Konu anlatımını sıfırdan dinle + 3 farklı kaynaktan soru çöz."
+        else:
+            oncelik = "🟡 ORTA ÖNCELİK (Yeni Eksik)"
+            hedef_soru = 75
+            tavsiye = "Hızlı formül/özet tekrarı + Soru bankasından test çöz."
+            
+        plan.append({
+            "konu": konu,
+            "tekrar": tekrar,
+            "oncelik": oncelik,
+            "hedef_soru": hedef_soru,
+            "tavsiye": tavsiye
+        })
+    return {"mesaj": "", "program": plan}
+
+
 # --- ÖĞRENCİ HTML KARNE ÜRETİCİ ---
 def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, student_name, fig_img_base64, veli_notu="", hedef_info=None):
     last_row = df_ogr.iloc[-1]
@@ -191,6 +223,37 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         hedef_html = f"""
         <div style="background:#edf2f7; border-left:4px solid #3182ce; padding:8px 12px; margin-bottom:12px; border-radius:4px; font-size:12px;">
             {durum_text}
+        </div>
+        """
+
+    # AI Çalışma Programı HTML Kodları
+    ai_plan = generate_ai_study_plan(aktif_eksikler)
+    ai_program_html = ""
+    if ai_plan["program"]:
+        ai_rows = ""
+        for p in ai_plan["program"]:
+            ai_rows += f"""
+            <tr style="font-size:11px;">
+                <td style="font-weight:bold; color:#2d3748;">{p['konu']}</td>
+                <td style="color:#c53030; font-weight:bold;">{p['oncelik']}</td>
+                <td style="text-align:center; font-weight:bold; color:#2b6cb0;">{p['hedef_soru']} Soru</td>
+                <td style="color:#4a5568;">{p['tavsiye']}</td>
+            </tr>
+            """
+        ai_program_html = f"""
+        <div style="margin-top:15px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
+            <div style="font-size:12px; font-weight:bold; color:#2b6cb0; margin-bottom:6px;">🤖 AKILLI ÖNERİ: HAFTALIK ÖZEL ÇALIŞMA ROTASI</div>
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#edf2f7; font-size:10px; text-align:left;">
+                        <th>Odak Konu</th>
+                        <th>Öncelik</th>
+                        <th style="text-align:center;">Haftalık Hedef</th>
+                        <th>Çalışma Stratejisi</th>
+                    </tr>
+                </thead>
+                <tbody>{ai_rows}</tbody>
+            </table>
         </div>
         """
 
@@ -313,6 +376,8 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
                 </div>
             </div>
 
+            {ai_program_html}
+
             {not_html}
 
             <div style="margin-top:12px;">
@@ -425,6 +490,22 @@ def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
                     st.success(f"✅ **{konu}** (Son sınavda başarıyla çözüldü)")
             else:
                 st.info("Henüz kazanılan konu kaydı bulunmuyor.")
+
+        # --- YENİ EKLENEN AKILLI ÇALIŞMA PLANIKARTI ---
+        st.markdown("---")
+        st.subheader("🤖 Yapay Zeka / Akıllı Sistem Haftalık Çalışma Önerisi")
+        ai_plan = generate_ai_study_plan(aktif_eksikler)
+        
+        if ai_plan["mesaj"]:
+            st.success(ai_plan["mesaj"])
+        else:
+            cols = st.columns(len(ai_plan["program"]))
+            for idx, p in enumerate(ai_plan["program"]):
+                with cols[idx]:
+                    st.markdown(f"**📌 Odak Konu:** {p['konu']}")
+                    st.caption(f"{p['oncelik']}")
+                    st.metric("Haftalık Hedef", f"{p['hedef_soru']} Soru")
+                    st.write(f"💡 *{p['tavsiye']}*")
 
         st.markdown("---")
         veli_notu = ""
@@ -993,7 +1074,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
     if sinavlar:
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(silinecek_label.keys()) if 'silinecek_label' in locals() else list(sinav_dict.keys()))
         silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
