@@ -10,7 +10,7 @@ col_logo, col_slogan = st.columns([1, 4], vertical_alignment="center")
 
 with col_logo:
     # Logo görseli (Local dosya yolu veya web URL'si verebilirsin)
-    st.image("golcukbasari.com/logo.png", width=120)  # Genişliği sayfanı rahatsız etmeyecek şekilde ayarlayabilirsin
+    st.image("logo.png", width=120)  # Genişliği sayfanı rahatsız etmeyecek şekilde ayarlayabilirsin
 
 with col_slogan:
     # Slogan metni
