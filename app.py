@@ -1144,7 +1144,7 @@ elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım" and st.s
                     
                     data_to_plot = [df_detay[df_detay['sinif'] == s]['toplam_net'].dropna().values for s in secilen_siniflar]
                     
-                    box = ax_box.boxplot(data_to_plot, patch_artist=True, trick_labels=secilen_siniflar)
+                    box = ax_box.boxplot(data_to_plot, patch_artist=True, tick_labels=secilen_siniflar)
 
                     for patch, color in zip(box['boxes'], colors[:len(secilen_siniflar)]):
                         patch.set_facecolor(color)
