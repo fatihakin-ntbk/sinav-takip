@@ -7,6 +7,7 @@ import os
 import base64
 import matplotlib.pyplot as plt
 import io
+import urllib.parse
 
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Sınav Takip & Analiz Paneli", page_icon="🎓", layout="wide")
@@ -69,7 +70,7 @@ def init_db():
     # Kurum Bilgileri ve Logo Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS kurum_ayarlari (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         kurum_adi TEXT,
         logo_base64 TEXT
     )''')
@@ -81,7 +82,8 @@ def init_db():
         kullanici_adi TEXT UNIQUE,
         sifre TEXT,
         rol TEXT,
-        ogrenci_adi_norm TEXT
+        ogrenci_adi_norm TEXT,
+        telefon TEXT
     )''')
 
     # Öğrenci Hedefleri Tablosu
@@ -97,11 +99,11 @@ def init_db():
     # Varsayılan Admin ve Öğretmen Hesapları
     cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'admin'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES ('admin', 'admin123', 'admin', NULL)")
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES ('admin', 'admin123', 'admin', NULL, '')")
 
     cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'ogretmen'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES ('ogretmen', 'ogretmen123', 'ogretmen', NULL)")
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES ('ogretmen', 'ogretmen123', 'ogretmen', NULL, '')")
 
     conn.commit()
     conn.close()
@@ -176,7 +178,7 @@ def get_ogrenci_hedef(ogrenci_norm_adi):
         return {"bolum": row[0], "net": row[1], "puan": row[2]}
     return None
 
-# --- YENİ EKLENEN: AKILLI ÇALIŞMA PROGRAMI JENERATÖRÜ ---
+# --- AKILLI ÇALIŞMA PROGRAMI JENERATÖRÜ ---
 def generate_ai_study_plan(aktif_eksikler):
     if not aktif_eksikler:
         return {
@@ -184,11 +186,10 @@ def generate_ai_study_plan(aktif_eksikler):
             "program": []
         }
     
-    # Eksikleri kritiklik seviyesine göre sırala
     sorted_eksikler = sorted(aktif_eksikler, key=lambda x: x[1], reverse=True)
     
     plan = []
-    for idx, (konu, tekrar) in enumerate(sorted_eksikler[:4]):  # En acil 4 konu
+    for idx, (konu, tekrar) in enumerate(sorted_eksikler[:4]):
         if tekrar >= 2:
             oncelik = "🔴 YÜKSEK ÖNCELİK (Kritik Eksik)"
             hedef_soru = 120
@@ -206,7 +207,6 @@ def generate_ai_study_plan(aktif_eksikler):
             "tavsiye": tavsiye
         })
     return {"mesaj": "", "program": plan}
-
 
 # --- ÖĞRENCİ HTML KARNE ÜRETİCİ ---
 def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, student_name, fig_img_base64, veli_notu="", hedef_info=None):
@@ -226,7 +226,6 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
         </div>
         """
 
-    # AI Çalışma Programı HTML Kodları
     ai_plan = generate_ai_study_plan(aktif_eksikler)
     ai_program_html = ""
     if ai_plan["program"]:
@@ -422,7 +421,6 @@ def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
         last_row = df_ogr.iloc[-1]
         hedef_info = get_ogrenci_hedef(secilen_norm)
         
-        # --- HEDEF PROJEKSİYON KARTI ---
         if hedef_info and hedef_info['net'] > 0:
             net_fark = last_row['toplam_net'] - hedef_info['net']
             st.info(f"🎯 **Hedeflenen Üniversite / Bölüm:** {hedef_info['bolum']} | **Hedef Net:** {hedef_info['net']} Net")
@@ -491,7 +489,6 @@ def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
             else:
                 st.info("Henüz kazanılan konu kaydı bulunmuyor.")
 
-        # --- YENİ EKLENEN AKILLI ÇALIŞMA PLANIKARTI ---
         st.markdown("---")
         st.subheader("🤖 Yapay Zeka / Akıllı Sistem Haftalık Çalışma Önerisi")
         ai_plan = generate_ai_study_plan(aktif_eksikler)
@@ -585,7 +582,6 @@ if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
 
 st.sidebar.markdown("---")
 
-# --- KULLANICI KENDİ ŞİFRESİNİ DEĞİŞTİRME SEKMESİ (SIDEBAR) ---
 with st.sidebar.expander("🔒 Şifremi Değiştir"):
     with st.form("change_password_form"):
         old_pass = st.text_input("Mevcut Şifre:", type="password")
@@ -619,6 +615,7 @@ if st.session_state['role'] == 'admin':
     menu_options = [
         "📤 Yeni Sınav Yükle", 
         "📊 Öğrenci Karneleri & Analiz", 
+        "📱 Veli Bilgilendirme & WhatsApp/SMS",
         "🎯 Hedef Belirleme & Takip",
         "🏫 Okul Genel Durumu & Dereceler", 
         "🔥 Okul Konu/Kazanım Analizi", 
@@ -629,12 +626,12 @@ if st.session_state['role'] == 'admin':
 elif st.session_state['role'] == 'ogretmen':
     menu_options = [
         "📊 Öğrenci Karneleri & Analiz", 
+        "📱 Veli Bilgilendirme & WhatsApp/SMS",
         "🎯 Hedef Belirleme & Takip",
         "🏫 Okul Genel Durumu & Dereceler", 
         "🔥 Okul Konu/Kazanım Analizi"
     ]
 else:
-    # Öğrenci & Veli Rolü
     menu_options = ["🎓 Gelişim & Analiz Karnem", "🎯 Üniversite / Hedefim"]
 
 secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
@@ -745,7 +742,87 @@ elif secim == "📊 Öğrenci Karneleri & Analiz" and st.session_state['role'] i
     else:
         st.warning("Bu kriterlere uygun öğrenci bulunamadı.")
 
-# --- 3. MENÜ: HEDEF BELİRLEME & TAKİP (TÜM ROLLER) ---
+# --- YENİ EKLENEN 3. MENÜ: VELİ BİLGİLENDİRME & WHATSAPP/SMS ---
+elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['role'] in ['admin', 'ogretmen']:
+    st.title("📱 Veli Bilgilendirme & WhatsApp/SMS Gönderim Paneli")
+    
+    conn = sqlite3.connect("sinav_takip.db")
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+    ogrenciler = cursor.fetchall()
+    
+    if ogrenciler:
+        ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
+        secilen_ogr = st.selectbox("Bilgilendirme Yapılacak Öğrenciyi Seçin:", list(ogr_dict.keys()))
+        secilen_norm = ogr_dict[secilen_ogr]
+        
+        # Öğrenci Sonuçlarını Al
+        query = '''
+        SELECT s.sinav_adi, os.tyt_puan, os.kurum_sirasi, os.toplam_net
+        FROM ogrenci_sonuclari os
+        JOIN sinavlar s ON os.sinav_id = s.sinav_id
+        WHERE os.ogrenci_adi_norm = ?
+        ORDER BY s.tarih DESC, s.sinav_id DESC LIMIT 1
+        '''
+        cursor.execute(query, (secilen_norm,))
+        last_exam = cursor.fetchone()
+        
+        # Telefon Bilgisini Çek (Veli veya Öğrenci)
+        cursor.execute("SELECT telefon FROM kullanicilar WHERE ogrenci_adi_norm = ? AND rol = 'veli' LIMIT 1", (secilen_norm,))
+        tel_row = cursor.fetchone()
+        default_tel = tel_row[0] if tel_row and tel_row[0] else ""
+        
+        if last_exam:
+            sinav_adi, puan, sira, net = last_exam
+            aktif_eksikler, _ = get_ogrenci_eksik_durumu(conn, secilen_norm)
+            
+            eksik_str = ""
+            if aktif_eksikler:
+                eksik_list = [f"• {k} ({t} kez)" for k, t in aktif_eksikler[:2]]
+                eksik_str = "\n📌 Acil Müdahale Konuları:\n" + "\n".join(eksik_list)
+            else:
+                eksik_str = "\n📌 Kritik eksik konusu bulunmuyor."
+            
+            kurum_adi, _ = get_kurum_bilgileri()
+
+            st.markdown("---")
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                phone_num = st.text_input("📱 Veli Telefon Numarası (Başında 90 ile):", value=default_tel, placeholder="905xxxxxxxxx")
+            
+            with col_t2:
+                mesaj_turu = st.selectbox("Mesaj Şablonu Seçin:", ["Özet Sınav Sonucu & Eksik Analizi", "Karne Giriş Bilgilendirmesi"])
+
+            if mesaj_turu == "Özet Sınav Sonucu & Eksik Analizi":
+                default_msg = f"Sayın Velimiz,\n\n{kurum_adi} bünyesinde gerçekleştirilen *{sinav_adi}* denemesinde öğrencimiz *{secilen_ogr}*;\n\n📊 TYT Neti: *{net:.2f}*\n🎯 TYT Puanı: *{puan:.2f}*\n🏆 Kurum Sırası: *{sira}*{eksik_str}\n\nDetaylı gelişim karnesi için öğretmeninizle iletişime geçebilirsiniz."
+            else:
+                default_msg = f"Sayın Velimiz,\n\nÖğrencimiz *{secilen_ogr}*'in *{sinav_adi}* deneme sınavı ve acil konu çalışma rotasını içeren güncel gelişim karnesi sistemimize yüklenmiştir.\n\nSisteme giriş yaparak gelişim grafiğini inceleyebilirsiniz.\n\nSaygılarımızla,\n*{kurum_adi}*"
+
+            final_msg = st.text_area("✍️ Gönderilecek Mesaj Metni (Düzenlenebilir):", value=default_msg, height=200)
+
+            # WhatsApp Web Yönlendirme Linki
+            encoded_msg = urllib.parse.quote(final_msg)
+            
+            clean_tel = re.sub(r'\D', '', phone_num)
+            wa_url = f"https://wa.me/{clean_tel}?text={encoded_msg}" if clean_tel else f"https://wa.me/?text={encoded_msg}"
+
+            st.markdown(f'''
+            <a href="{wa_url}" target="_blank" style="text-decoration:none;">
+                <button style="width:100%; background-color:#25D366; color:white; border:none; padding:12px; font-size:16px; border-radius:8px; font-weight:bold; cursor:pointer;">
+                    📲 WhatsApp İle Velisine Gönder
+                </button>
+            </a>
+            ''', unsafe_allow_html=True)
+
+        else:
+            st.warning("Bu öğrencinin henüz sınav sonucu bulunmamaktadır.")
+    else:
+        st.warning("Sistemde öğrenci bulunmamaktadır.")
+
+    conn.close()
+
+# --- 4. MENÜ: HEDEF BELİRLEME & TAKİP ---
 elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
     st.title("🎯 Hedef Belirleme ve Net Projeksiyonu")
 
@@ -800,7 +877,6 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
                 st.success("✅ Hedefler başarıyla güncellendi!")
                 st.rerun()
 
-        # Projeksiyon Analizi
         cursor.execute("SELECT toplam_net, tyt_puan FROM ogrenci_sonuclari WHERE ogrenci_adi_norm = ? ORDER BY id DESC LIMIT 1", (secilen_norm,))
         last_exam = cursor.fetchone()
 
@@ -824,7 +900,7 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
 
     conn.close()
 
-# --- 4. MENÜ: ÖĞRENCİ & VELİ KENDİ KARNESİ ---
+# --- 5. MENÜ: ÖĞRENCİ & VELİ KENDİ KARNESİ ---
 elif secim == "🎓 Gelişim & Analiz Karnem" and st.session_state['role'] in ['ogrenci', 'veli']:
     st.title(f"🎓 Öğrenci Gelişim Karnesi")
     secilen_norm = st.session_state['user_info']['norm_adi']
@@ -839,7 +915,7 @@ elif secim == "🎓 Gelişim & Analiz Karnem" and st.session_state['role'] in ['
     else:
         st.error("Hesabınızla eşleşen öğrenci kaydı bulunamadı. Lütfen yönetimle iletişime geçin.")
 
-# --- 5. MENÜ: GENEL OKUL DURUMU (ADMİN & ÖĞRETMEN) ---
+# --- 6. MENÜ: GENEL OKUL DURUMU (ADMİN & ÖĞRETMEN) ---
 elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🏫 Okul Genel Başarı Analizi ve Derece Listeleri")
     conn = sqlite3.connect("sinav_takip.db")
@@ -892,7 +968,7 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] 
         )
     conn.close()
 
-# --- 6. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
+# --- 7. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
 elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🔥 Okul & Sınıf Geneli En Çok Yanlış Yapılan Konular")
 
@@ -947,7 +1023,7 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in 
 
     conn.close()
 
-# --- 7. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ (ADMİN) ---
+# --- 8. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ (ADMİN) ---
 elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
     st.title("👥 Öğrenci & Veli Hesap Tanımlama Paneli")
 
@@ -965,7 +1041,8 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
         with col1:
             secilen_ogr = st.selectbox("Hesabın Bağı / İlişkili Olduğu Öğrenci:", list(ogr_dict.keys()))
             hesap_turu = st.selectbox("Hesap Türü / Rol:", ["ogrenci", "veli"])
-        
+            telefon_no = st.text_input("Veli Telefon Numarası (Başında 90 ile):", placeholder="Örn: 905321234567")
+
         with col2:
             yeni_username = st.text_input("Kullanıcı Adı:", placeholder="Örn: ahmet123 veya ahmet_veli")
             yeni_password = st.text_input("Şifre:", type="password", value="123456")
@@ -975,8 +1052,8 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
                 try:
                     norm_adi = ogr_dict[secilen_ogr]
                     cursor.execute(
-                        "INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES (?, ?, ?, ?)",
-                        (yeni_username.strip(), yeni_password.strip(), hesap_turu, norm_adi)
+                        "INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, ?, ?, ?, ?)",
+                        (yeni_username.strip(), yeni_password.strip(), hesap_turu, norm_adi, telefon_no.strip())
                     )
                     conn.commit()
                     st.success(f"✅ '{secilen_ogr}' öğrencisi için **{hesap_turu.upper()}** hesabı başarıyla oluşturuldu!")
@@ -1010,7 +1087,7 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
         st.markdown("---")
         st.subheader("📋 Sistemde Kayıtlı Kullanıcı Hesapları")
         
-        users_df = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm FROM kullanicilar WHERE rol IN ('ogrenci', 'veli')", conn)
+        users_df = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm, telefon FROM kullanicilar WHERE rol IN ('ogrenci', 'veli')", conn)
         st.dataframe(users_df, use_container_width=True)
 
         silinecek_user_id = st.number_input("Silmek İstediğiniz Kullanıcı ID (Hesap ID):", min_value=1, step=1)
@@ -1025,7 +1102,7 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
     
     conn.close()
 
-# --- 8. MENÜ: KURUM AYARLARI VE LOGO (ADMİN) ---
+# --- 9. MENÜ: KURUM AYARLARI VE LOGO (ADMİN) ---
 elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
     st.title("⚙️ Kurum ve Logo Ayarları")
 
@@ -1063,7 +1140,7 @@ elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'a
         if mevcut_logo:
             st.image(base64.b64decode(mevcut_logo), width=220)
 
-# --- 9. MENÜ: SINAV SİLME (ADMİN) ---
+# --- 10. MENÜ: SINAV SİLME (ADMİN) ---
 elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
     st.title("🗑️ Sınav Yönetim ve Silme Paneli")
     conn = sqlite3.connect("sinav_takip.db")
@@ -1074,7 +1151,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
     if sinavlar:
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(silinecek_label.keys()) if 'silinecek_label' in locals() else list(sinav_dict.keys()))
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
         silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
