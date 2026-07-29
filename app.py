@@ -742,83 +742,157 @@ elif secim == "📊 Öğrenci Karneleri & Analiz" and st.session_state['role'] i
     else:
         st.warning("Bu kriterlere uygun öğrenci bulunamadı.")
 
-# --- YENİ EKLENEN 3. MENÜ: VELİ BİLGİLENDİRME & WHATSAPP/SMS ---
+# --- 3. MENÜ: VELİ BİLGİLENDİRME & TOPLU WHATSAPP/SMS ---
 elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['role'] in ['admin', 'ogretmen']:
-    st.title("📱 Veli Bilgilendirme & WhatsApp/SMS Gönderim Paneli")
+    st.title("📱 Veli Bilgilendirme ve Toplu Gönderim Paneli")
+    
+    tab1, tab2 = st.tabs(["👤 Bireysel Gönderim", "🚀 Sınıf / Okul Geneli Toplu Gönderim"])
     
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
-    
-    cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
-    ogrenciler = cursor.fetchall()
-    
-    if ogrenciler:
-        ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
-        secilen_ogr = st.selectbox("Bilgilendirme Yapılacak Öğrenciyi Seçin:", list(ogr_dict.keys()))
-        secilen_norm = ogr_dict[secilen_ogr]
-        
-        # Öğrenci Sonuçlarını Al
-        query = '''
-        SELECT s.sinav_adi, os.tyt_puan, os.kurum_sirasi, os.toplam_net
-        FROM ogrenci_sonuclari os
-        JOIN sinavlar s ON os.sinav_id = s.sinav_id
-        WHERE os.ogrenci_adi_norm = ?
-        ORDER BY s.tarih DESC, s.sinav_id DESC LIMIT 1
-        '''
-        cursor.execute(query, (secilen_norm,))
-        last_exam = cursor.fetchone()
-        
-        # Telefon Bilgisini Çek (Veli veya Öğrenci)
-        cursor.execute("SELECT telefon FROM kullanicilar WHERE ogrenci_adi_norm = ? AND rol = 'veli' LIMIT 1", (secilen_norm,))
-        tel_row = cursor.fetchone()
-        default_tel = tel_row[0] if tel_row and tel_row[0] else ""
-        
-        if last_exam:
-            sinav_adi, puan, sira, net = last_exam
-            aktif_eksikler, _ = get_ogrenci_eksik_durumu(conn, secilen_norm)
-            
-            eksik_str = ""
-            if aktif_eksikler:
-                eksik_list = [f"• {k} ({t} kez)" for k, t in aktif_eksikler[:2]]
-                eksik_str = "\n📌 Acil Müdahale Konuları:\n" + "\n".join(eksik_list)
-            else:
-                eksik_str = "\n📌 Kritik eksik konusu bulunmuyor."
-            
-            kurum_adi, _ = get_kurum_bilgileri()
+    kurum_adi, _ = get_kurum_bilgileri()
 
+    # --- TAB 1: BİREYSEL GÖNDERİM ---
+    with tab1:
+        cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+        ogrenciler = cursor.fetchall()
+        
+        if ogrenciler:
+            ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
+            secilen_ogr = st.selectbox("Bilgilendirme Yapılacak Öğrenciyi Seçin:", list(ogr_dict.keys()))
+            secilen_norm = ogr_dict[secilen_ogr]
+            
+            query = '''
+            SELECT s.sinav_adi, os.tyt_puan, os.kurum_sirasi, os.toplam_net
+            FROM ogrenci_sonuclari os
+            JOIN sinavlar s ON os.sinav_id = s.sinav_id
+            WHERE os.ogrenci_adi_norm = ?
+            ORDER BY s.tarih DESC, s.sinav_id DESC LIMIT 1
+            '''
+            cursor.execute(query, (secilen_norm,))
+            last_exam = cursor.fetchone()
+            
+            cursor.execute("SELECT telefon FROM kullanicilar WHERE ogrenci_adi_norm = ? AND rol = 'veli' LIMIT 1", (secilen_norm,))
+            tel_row = cursor.fetchone()
+            default_tel = tel_row[0] if tel_row and tel_row[0] else ""
+            
+            if last_exam:
+                sinav_adi, puan, sira, net = last_exam
+                aktif_eksikler, _ = get_ogrenci_eksik_durumu(conn, secilen_norm)
+                
+                eksik_str = ""
+                if aktif_eksikler:
+                    eksik_list = [f"• {k} ({t} kez)" for k, t in aktif_eksikler[:2]]
+                    eksik_str = "\n📌 Acil Müdahale Konuları:\n" + "\n".join(eksik_list)
+                else:
+                    eksik_str = "\n📌 Kritik eksik konusu bulunmuyor."
+
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    phone_num = st.text_input("📱 Veli Telefon Numarası (Başında 90 ile):", value=default_tel, placeholder="905xxxxxxxxx")
+                with col_t2:
+                    mesaj_turu = st.selectbox("Mesaj Şablonu Seçin:", ["Özet Sınav Sonucu & Eksik Analizi", "Karne Giriş Bilgilendirmesi"])
+
+                if mesaj_turu == "Özet Sınav Sonucu & Eksik Analizi":
+                    default_msg = f"Sayın Velimiz,\n\n{kurum_adi} bünyesinde gerçekleştirilen *{sinav_adi}* denemesinde öğrencimiz *{secilen_ogr}*;\n\n📊 TYT Neti: *{net:.2f}*\n🎯 TYT Puanı: *{puan:.2f}*\n🏆 Kurum Sırası: *{sira}*{eksik_str}\n\nDetaylı gelişim karnesi için öğretmeninizle iletişime geçebilirsiniz."
+                else:
+                    default_msg = f"Sayın Velimiz,\n\nÖğrencimiz *{secilen_ogr}*'in *{sinav_adi}* deneme sınavı ve acil konu çalışma rotasını içeren güncel gelişim karnesi sistemimize yüklenmiştir.\n\nSisteme giriş yaparak gelişim grafiğini inceleyebilirsiniz.\n\nSaygılarımızla,\n*{kurum_adi}*"
+
+                final_msg = st.text_area("✍️ Gönderilecek Mesaj Metni:", value=default_msg, height=180)
+                encoded_msg = urllib.parse.quote(final_msg)
+                clean_tel = re.sub(r'\D', '', phone_num)
+                wa_url = f"https://wa.me/{clean_tel}?text={encoded_msg}" if clean_tel else f"https://wa.me/?text={encoded_msg}"
+
+                st.markdown(f'''
+                <a href="{wa_url}" target="_blank" style="text-decoration:none;">
+                    <button style="width:100%; background-color:#25D366; color:white; border:none; padding:12px; font-size:16px; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        📲 WhatsApp İle Velisine Gönder
+                    </button>
+                </a>
+                ''', unsafe_allow_html=True)
+
+    # --- TAB 2: TOPLU GÖNDERİM MODÜLÜ ---
+    with tab2:
+        st.subheader("🚀 Sınıf / Okul Geneli Seri WhatsApp Gönderim Modülü")
+        st.info("💡 **Nasıl Çalışır?** Filtrelediğiniz sınıftaki velilerin mesajları sırayla hazırlanır. Butonlara sırayla tıklayarak WhatsApp Web üzerinden saniyeler içinde tüm sınıfa gönderim yapabilirsiniz.")
+
+        cursor.execute("SELECT sinav_adi FROM sinavlar ORDER BY tarih DESC")
+        sinav_list = [s[0] for s in cursor.fetchall()]
+        
+        cursor.execute("SELECT DISTINCT sinif FROM ogrenci_sonuclari ORDER BY sinif ASC")
+        sinif_list = ["Tüm Sınıflar"] + [s[0] for s in cursor.fetchall() if s[0]]
+
+        if sinav_list:
+            c_top1, c_top2 = st.columns(2)
+            with c_top1:
+                toplu_sinav = st.selectbox("Gönderilecek Sınavı Seçin:", sinav_list)
+            with c_top2:
+                toplu_sinif = st.selectbox("Gönderilecek Sınıfı Seçin:", sinif_list)
+
+            # Sınav Verisini Çek
+            if toplu_sinif == "Tüm Sınıflar":
+                q_toplu = '''
+                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, k.telefon
+                FROM ogrenci_sonuclari os
+                JOIN sinavlar s ON os.sinav_id = s.sinav_id
+                LEFT JOIN kullanicilar k ON (os.ogrenci_adi_norm = k.ogrenci_adi_norm AND k.rol = 'veli')
+                WHERE s.sinav_adi = ?
+                ORDER BY os.ogrenci_adi ASC
+                '''
+                df_toplu = pd.read_sql_query(q_toplu, conn, params=(toplu_sinav,))
+            else:
+                q_toplu = '''
+                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, k.telefon
+                FROM ogrenci_sonuclari os
+                JOIN sinavlar s ON os.sinav_id = s.sinav_id
+                LEFT JOIN kullanicilar k ON (os.ogrenci_adi_norm = k.ogrenci_adi_norm AND k.rol = 'veli')
+                WHERE s.sinav_adi = ? AND os.sinif = ?
+                ORDER BY os.ogrenci_adi ASC
+                '''
+                df_toplu = pd.read_sql_query(q_toplu, conn, params=(toplu_sinav, toplu_sinif))
+
+            st.write(f"📊 **Seçilen Kriterde Bulunan Öğrenci Sayısı:** {len(df_toplu)}")
             st.markdown("---")
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                phone_num = st.text_input("📱 Veli Telefon Numarası (Başında 90 ile):", value=default_tel, placeholder="905xxxxxxxxx")
-            
-            with col_t2:
-                mesaj_turu = st.selectbox("Mesaj Şablonu Seçin:", ["Özet Sınav Sonucu & Eksik Analizi", "Karne Giriş Bilgilendirmesi"])
 
-            if mesaj_turu == "Özet Sınav Sonucu & Eksik Analizi":
-                default_msg = f"Sayın Velimiz,\n\n{kurum_adi} bünyesinde gerçekleştirilen *{sinav_adi}* denemesinde öğrencimiz *{secilen_ogr}*;\n\n📊 TYT Neti: *{net:.2f}*\n🎯 TYT Puanı: *{puan:.2f}*\n🏆 Kurum Sırası: *{sira}*{eksik_str}\n\nDetaylı gelişim karnesi için öğretmeninizle iletişime geçebilirsiniz."
-            else:
-                default_msg = f"Sayın Velimiz,\n\nÖğrencimiz *{secilen_ogr}*'in *{sinav_adi}* deneme sınavı ve acil konu çalışma rotasını içeren güncel gelişim karnesi sistemimize yüklenmiştir.\n\nSisteme giriş yaparak gelişim grafiğini inceleyebilirsiniz.\n\nSaygılarımızla,\n*{kurum_adi}*"
+            for idx, r in df_toplu.iterrows():
+                norm_adi = r['ogrenci_adi_norm']
+                ogr_adi = r['ogrenci_adi']
+                tel = r['telefon'] if r['telefon'] else ""
+                net = r['toplam_net']
+                puan = r['tyt_puan']
+                sira = int(r['kurum_sirasi'])
 
-            final_msg = st.text_area("✍️ Gönderilecek Mesaj Metni (Düzenlenebilir):", value=default_msg, height=200)
+                aktif_eksikler, _ = get_ogrenci_eksik_durumu(conn, norm_adi)
+                eksik_str = ""
+                if aktif_eksikler:
+                    eksik_list = [f"• {k} ({t} kez)" for k, t in aktif_eksikler[:2]]
+                    eksik_str = "\n📌 Acil Müdahale Konuları:\n" + "\n".join(eksik_list)
 
-            # WhatsApp Web Yönlendirme Linki
-            encoded_msg = urllib.parse.quote(final_msg)
-            
-            clean_tel = re.sub(r'\D', '', phone_num)
-            wa_url = f"https://wa.me/{clean_tel}?text={encoded_msg}" if clean_tel else f"https://wa.me/?text={encoded_msg}"
+                msg = f"Sayın Velimiz,\n\n{kurum_adi} bünyesinde gerçekleştirilen *{toplu_sinav}* denemesinde öğrencimiz *{ogr_adi}*;\n\n📊 TYT Neti: *{net:.2f}*\n🎯 TYT Puanı: *{puan:.2f}*\n🏆 Kurum Sırası: *{sira}*{eksik_str}\n\nDetaylı gelişim karnesini incelemek için portalımıza giriş yapabilirsiniz."
+                
+                enc_msg = urllib.parse.quote(msg)
+                clean_t = re.sub(r'\D', '', str(tel))
+                wa_link = f"https://wa.me/{clean_t}?text={enc_msg}" if clean_t else f"https://wa.me/?text={enc_msg}"
 
-            st.markdown(f'''
-            <a href="{wa_url}" target="_blank" style="text-decoration:none;">
-                <button style="width:100%; background-color:#25D366; color:white; border:none; padding:12px; font-size:16px; border-radius:8px; font-weight:bold; cursor:pointer;">
-                    📲 WhatsApp İle Velisine Gönder
-                </button>
-            </a>
-            ''', unsafe_allow_html=True)
+                c1, c2, c3, c4 = st.columns([2, 1.5, 2, 1.5])
+                with c1:
+                    st.write(f"👤 **{ogr_adi}** ({r['sinif']})")
+                with c2:
+                    st.write(f"📞 {tel if tel else '⚠️ Tel Yok'}")
+                with c3:
+                    st.caption(f"Net: {net:.2f} | Puan: {puan:.2f} | Sıra: {sira}")
+                with c4:
+                    st.markdown(f'''
+                    <a href="{wa_link}" target="_blank" style="text-decoration:none;">
+                        <button style="background-color:#25D366; color:white; border:none; padding:6px 12px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:12px;">
+                            📲 WhatsApp Aç
+                        </button>
+                    </a>
+                    ''', unsafe_allow_html=True)
+                st.markdown("<hr style='margin:4px 0;'>", unsafe_allow_html=True)
 
         else:
-            st.warning("Bu öğrencinin henüz sınav sonucu bulunmamaktadır.")
-    else:
-        st.warning("Sistemde öğrenci bulunmamaktadır.")
+            st.warning("Henüz sistemde kayıtlı sınav bulunmuyor.")
 
     conn.close()
 
