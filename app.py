@@ -1127,34 +1127,34 @@ elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım" and st.s
                     st.pyplot(fig_radar)
 
                 with c_rad2:
-                    st.subheader("📦 Sınıf Toplam Net Dağılımı (Boxplot)")
-                    st.caption("Çizgi: Medyan (Orta değer) | Kutu: Öğrenci Yoğunluğu")
+    st.subheader("📦 Sınıf Toplam Net Dağılımı (Boxplot)")
+    st.caption("Çizgi: Medyan (Orta değer) | Kutu: Öğrenci Yoğunluğu")
 
-                    # Detay Öğrenci Verilerini Çek
-                    query_detay = '''
-                    SELECT os.sinif, os.toplam_net
-                    FROM ogrenci_sonuclari os
-                    JOIN sinavlar s ON os.sinav_id = s.sinav_id
-                    WHERE s.sinav_adi = ? AND os.sinif IN ({})
-                    '''.format(','.join(['?']*len(secilen_siniflar)))
+    # Detay Öğrenci Verilerini Çek
+    query_detay = '''
+    SELECT os.sinif, os.toplam_net
+    FROM ogrenci_sonuclari os
+    JOIN sinavlar s ON os.sinav_id = s.sinav_id
+    WHERE s.sinav_adi = ? AND os.sinif IN ({})
+    '''.format(','.join(['?']*len(secilen_siniflar)))
 
-                    df_detay = pd.read_sql_query(query_detay, conn, params=[secilen_sinav] + secilen_siniflar)
+    df_detay = pd.read_sql_query(query_detay, conn, params=[secilen_sinav] + secilen_siniflar)
 
-                    fig_box, ax_box = plt.subplots(figsize=(6, 5.5))
-                    
-                    data_to_plot = [df_detay[df_detay['sinif'] == s]['toplam_net'].dropna().values for s in secilen_siniflar]
-                    
-                    # 'labels' yerine 'tick_labels' kullanıyoruz
-box = ax_box.boxplot(data_to_plot, patch_artist=True, tick_labels=secilen_siniflar)
+    fig_box, ax_box = plt.subplots(figsize=(6, 5.5))
+    
+    data_to_plot = [df_detay[df_detay['sinif'] == s]['toplam_net'].dropna().values for s in secilen_siniflar]
+    
+    # Matplotlib sürüm uyumsuzluğunu önlemek için 'tick_labels' kullandık
+    box = ax_box.boxplot(data_to_plot, patch_artist=True, tick_labels=secilen_siniflar)
 
-                    for patch, color in zip(box['boxes'], colors[:len(secilen_siniflar)]):
-                        patch.set_facecolor(color)
-                        patch.set_alpha(0.6)
+    for patch, color in zip(box['boxes'], colors[:len(secilen_siniflar)]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
 
-                    ax_box.set_ylabel("Toplam Net")
-                    ax_box.set_title(f"{secilen_sinav} - Net Dağılımı", fontsize=11, fontweight='bold')
-                    ax_box.grid(True, linestyle='--', alpha=0.5)
-                    st.pyplot(fig_box)
+    ax_box.set_ylabel("Toplam Net")
+    ax_box.set_title(f"{secilen_sinav} - Net Dağılımı", fontsize=11, fontweight='bold')
+    ax_box.grid(True, linestyle='--', alpha=0.5)
+    st.pyplot(fig_box)
 
             else:
                 st.warning("Lütfen grafik oluşturmak için en az bir sınıf seçin.")
