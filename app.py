@@ -74,23 +74,24 @@ def init_db():
         logo_base64 TEXT
     )''')
 
-    # Kullanıcılar Tablosu
+    # Kullanıcılar Tablosu (ogrenci_adi_norm sütunu eklendi)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS kullanicilar (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kullanici_adi TEXT UNIQUE,
         sifre TEXT,
-        rol TEXT
+        rol TEXT,
+        ogrenci_adi_norm TEXT
     )''')
 
-    # Varsayılan Hesapları Oluştur (Eğer yoksa)
+    # Varsayılan Admin ve Öğretmen Hesapları
     cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'admin'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('admin', 'admin123', 'admin')")
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES ('admin', 'admin123', 'admin', NULL)")
 
     cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'ogretmen'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('ogretmen', 'ogretmen123', 'ogretmen')")
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES ('ogretmen', 'ogretmen123', 'ogretmen', NULL)")
 
     conn.commit()
     conn.close()
@@ -108,10 +109,9 @@ def get_kurum_bilgileri():
         return row[0], row[1]
     return "NAZİF TOKGÖZ BAŞARI KOLEJİ", None
 
-# --- DİNAMİK / AKILLI EKSİK KONU SORGUSU ---
+# --- DİNAMİK EKSİK KONU SORGUSU ---
 def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     cursor = conn.cursor()
-    
     cursor.execute('''
         SELECT s.sinav_id 
         FROM sinavlar s
@@ -153,7 +153,6 @@ def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
     ''', (ogrenci_norm_adi, ogrenci_norm_adi, last_sinav_id))
     
     tamamlanan_konular = [row[0] for row in cursor.fetchall()]
-    
     return aktif_eksikler, tamamlanan_konular
 
 # --- ÖĞRENCİ HTML KARNE ÜRETİCİ ---
@@ -307,7 +306,100 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
     """
     return html_content
 
-# --- OTURUM YÖNETİMİ (LOGIN / LOGOUT) ---
+# --- ÖĞRENCİ KARNE GÖRÜNTÜLEME BİLEŞENİ ---
+def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
+    conn = sqlite3.connect("sinav_takip.db")
+    query = '''
+    SELECT s.sinav_adi, s.tarih, os.tyt_puan, os.kurum_sirasi, 
+           os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net, os.sinif
+    FROM ogrenci_sonuclari os
+    JOIN sinavlar s ON os.sinav_id = s.sinav_id
+    WHERE os.ogrenci_adi_norm = ?
+    ORDER BY s.tarih ASC
+    '''
+    df_ogr = pd.read_sql_query(query, conn, params=(secilen_norm,))
+
+    if not df_ogr.empty:
+        last_row = df_ogr.iloc[-1]
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Son TYT Puanı", f"{last_row['tyt_puan']:.2f}")
+        col2.metric("Kurum Sırası", f"{int(last_row['kurum_sirasi'])}")
+        col3.metric("Son Toplam Net", f"{last_row['toplam_net']:.2f}")
+        col4.metric("Sınıfı", f"{last_row['sinif']}")
+
+        st.markdown("---")
+
+        grafik_turu = st.radio("Grafik Türü:", ["Toplam Net Gelişimi", "Ders Bazlı Net Dağılımı"], horizontal=True)
+        c1, c2 = st.columns([1.1, 0.9])
+        
+        fig, ax = plt.subplots(figsize=(7, 3.5))
+        if grafik_turu == "Toplam Net Gelişimi":
+            ax.plot(df_ogr['sinav_adi'], df_ogr['toplam_net'], marker='o', color='#2b5797', linewidth=2.5)
+            for i, txt in enumerate(df_ogr['toplam_net']):
+                ax.annotate(f"{txt:.1f}", (df_ogr['sinav_adi'][i], df_ogr['toplam_net'][i]+2), ha='center', fontweight='bold')
+            ax.set_ylim(0, 120)
+        else:
+            ax.plot(df_ogr['sinav_adi'], df_ogr['turkce_net'], marker='s', color='#e74c3c', label="Türkçe")
+            ax.plot(df_ogr['sinav_adi'], df_ogr['matematik_net'], marker='^', color='#27ae60', label="Matematik")
+            ax.plot(df_ogr['sinav_adi'], df_ogr['fen_net'], marker='o', color='#f39c12', label="Fen")
+            ax.plot(df_ogr['sinav_adi'], df_ogr['sosyal_net'], marker='d', color='#8e44ad', label="Sosyal")
+            ax.legend(loc="upper left")
+            ax.set_ylim(0, 42)
+
+        ax.set_ylabel("Net")
+        ax.grid(True, linestyle='--', alpha=0.5)
+        plt.xticks(rotation=15)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        buf.seek(0)
+        fig_img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+
+        with c1:
+            st.subheader("📈 Net Gelişim Grafiği")
+            st.pyplot(fig)
+
+        with c2:
+            aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(conn, secilen_norm)
+
+            st.subheader("⚠️ Acil Müdahale Gereken Konular")
+            if aktif_eksikler:
+                for konu, tekrar in aktif_eksikler:
+                    st.error(f"📌 **{konu}** ({tekrar} Sınavda Yanlış)")
+            else:
+                st.success("🎉 Aktif eksik konu bulunmuyor!")
+
+            st.subheader("🎉 Başarıyla Halledilen Konular")
+            if tamamlanan_konular:
+                for konu in tamamlanan_konular:
+                    st.success(f"✅ **{konu}** (Son sınavda başarıyla çözüldü)")
+            else:
+                st.info("Henüz kazanılan konu kaydı bulunmuyor.")
+
+        st.markdown("---")
+        veli_notu = ""
+        if allow_notes:
+            veli_notu = st.text_area("✍️ Rehberlik / Öğretmen Veli Değerlendirme Notu (Karnede Görünür):", height=80)
+
+        html_report = generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, secilen_ogr_adi, fig_img_base64, veli_notu)
+        
+        st.download_button(
+            label=f"📄 {secilen_ogr_adi} Karne Raporunu İndir (PDF/HTML)",
+            data=html_report,
+            file_name=f"{secilen_norm}_Gelisim_Karnesi.html",
+            mime="text/html",
+            type="primary",
+            use_container_width=True
+        )
+
+        st.subheader("📋 Sınav Geçmiş Tablosu")
+        st.dataframe(df_ogr[['sinav_adi', 'tarih', 'turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'toplam_net', 'tyt_puan']], use_container_width=True)
+    else:
+        st.warning("Bu öğrenciye ait herhangi bir sınav verisi bulunamadı.")
+    conn.close()
+
+# --- OTURUM YÖNETİMİ ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
     st.session_state['role'] = None
@@ -327,14 +419,14 @@ def login_screen():
             if submit:
                 conn = sqlite3.connect("sinav_takip.db")
                 cursor = conn.cursor()
-                cursor.execute("SELECT rol FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", (username.strip(), password.strip()))
+                cursor.execute("SELECT rol, ogrenci_adi_norm, kullanici_adi FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", (username.strip(), password.strip()))
                 user = cursor.fetchone()
                 conn.close()
 
                 if user:
                     st.session_state['logged_in'] = True
-                    st.session_state['role'] = user[0]  # 'admin' veya 'ogretmen'
-                    st.session_state['user_info'] = {'username': username}
+                    st.session_state['role'] = user[0] 
+                    st.session_state['user_info'] = {'username': user[2], 'norm_adi': user[1]}
                     st.success("Giriş başarılı!")
                     st.rerun()
                 else:
@@ -344,9 +436,16 @@ if not st.session_state['logged_in']:
     login_screen()
     st.stop()
 
-# --- YAN MENÜ VE ÇIKIŞ ---
+# --- YAN MENÜ VE ROL İKONLARI ---
+role_labels = {
+    'admin': '👑 Yönetici (Admin)',
+    'ogretmen': '👨‍🏫 Öğretmen',
+    'ogrenci': '🎓 Öğrenci',
+    'veli': '👨‍👩‍👦 Veli'
+}
+
 st.sidebar.markdown(f"### 👤 Kullanıcı: **{st.session_state['user_info']['username'].upper()}**")
-st.sidebar.markdown(f"🔑 Rol: **{'👑 Yönetici (Admin)' if st.session_state['role'] == 'admin' else '👨‍🏫 Öğretmen'}**")
+st.sidebar.markdown(f"🔑 Rol: **{role_labels.get(st.session_state['role'], 'Kullanıcı')}**")
 
 if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
     st.session_state['logged_in'] = False
@@ -356,27 +455,30 @@ if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
 
 st.sidebar.markdown("---")
 
-# --- MENÜ LİSTESİ (ROL BAZLI GÖRÜNÜR) ---
+# --- ROL BAZLI MENÜ OLUŞTURMA ---
 if st.session_state['role'] == 'admin':
     menu_options = [
         "📤 Yeni Sınav Yükle", 
         "📊 Öğrenci Karneleri & Analiz", 
         "🏫 Okul Genel Durumu & Dereceler", 
         "🔥 Okul Konu/Kazanım Analizi", 
+        "👥 Öğrenci & Veli Hesap Yönetimi",
         "⚙️ Kurum Ayarları & Logo",
         "🗑️ Sınav Yönetimi & Silme"
     ]
-else:
-    # Öğretmen Rolünün Görebileceği Sayfalar
+elif st.session_state['role'] == 'ogretmen':
     menu_options = [
         "📊 Öğrenci Karneleri & Analiz", 
         "🏫 Okul Genel Durumu & Dereceler", 
         "🔥 Okul Konu/Kazanım Analizi"
     ]
+else:
+    # Öğrenci & Veli Rolü
+    menu_options = ["🎓 Gelişim & Analiz Karnem"]
 
 secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
 
-# --- 1. MENÜ: YENİ SINAV YÜKLE (SADECE ADMİN) ---
+# --- 1. MENÜ: YENİ SINAV YÜKLE (ADMİN) ---
 if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     st.title("📤 Yeni Deneme Sınavı Yükleme Paneli")
     col1, col2 = st.columns(2)
@@ -385,7 +487,7 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     with col2:
         sinav_tarihi = st.date_input("Sınav Tarihi")
 
-    excel_file = st.file_uploader("Toplu Sonuç Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
+    excel_file = st.file_uploader("Toplu Sonuc Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
     pdf_file = st.file_uploader("Yanlış Cevap Listesi PDF Dosyasını Yükleyin (.pdf)", type=["pdf"])
 
     if st.button("🚀 Sınavı Veritabanına İşle ve Analiz Et", type="primary"):
@@ -456,7 +558,7 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                 st.error(f"Hata oluştu: {e}")
 
 # --- 2. MENÜ: ÖĞRENCİ KARNELERİ (ADMİN & ÖĞRETMEN) ---
-elif secim == "📊 Öğrenci Karneleri & Analiz":
+elif secim == "📊 Öğrenci Karneleri & Analiz" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🎓 Öğrenci Analiz Karnesi")
 
     conn = sqlite3.connect("sinav_takip.db")
@@ -472,103 +574,33 @@ elif secim == "📊 Öğrenci Karneleri & Analiz":
         cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari WHERE sinif = ? ORDER BY ogrenci_adi ASC", (secilen_sinif,))
     
     ogrenciler = cursor.fetchall()
+    conn.close()
+
     if ogrenciler:
         ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
         secilen_ogr_adi = st.selectbox("Öğrenci Seçin:", list(ogr_dict.keys()))
         secilen_norm = ogr_dict[secilen_ogr_adi]
-
-        query = '''
-        SELECT s.sinav_adi, s.tarih, os.tyt_puan, os.kurum_sirasi, 
-               os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net, os.sinif
-        FROM ogrenci_sonuclari os
-        JOIN sinavlar s ON os.sinav_id = s.sinav_id
-        WHERE os.ogrenci_adi_norm = ?
-        ORDER BY s.tarih ASC
-        '''
-        df_ogr = pd.read_sql_query(query, conn, params=(secilen_norm,))
-
-        if not df_ogr.empty:
-            last_row = df_ogr.iloc[-1]
-            
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Son TYT Puanı", f"{last_row['tyt_puan']:.2f}")
-            col2.metric("Kurum Sırası", f"{int(last_row['kurum_sirasi'])}")
-            col3.metric("Son Toplam Net", f"{last_row['toplam_net']:.2f}")
-            col4.metric("Sınıfı", f"{last_row['sinif']}")
-
-            st.markdown("---")
-
-            grafik_turu = st.radio("Grafik Türü:", ["Toplam Net Gelişimi", "Ders Bazlı Net Dağılımı"], horizontal=True)
-
-            c1, c2 = st.columns([1.1, 0.9])
-            
-            fig, ax = plt.subplots(figsize=(7, 3.5))
-            if grafik_turu == "Toplam Net Gelişimi":
-                ax.plot(df_ogr['sinav_adi'], df_ogr['toplam_net'], marker='o', color='#2b5797', linewidth=2.5)
-                for i, txt in enumerate(df_ogr['toplam_net']):
-                    ax.annotate(f"{txt:.1f}", (df_ogr['sinav_adi'][i], df_ogr['toplam_net'][i]+2), ha='center', fontweight='bold')
-                ax.set_ylim(0, 120)
-            else:
-                ax.plot(df_ogr['sinav_adi'], df_ogr['turkce_net'], marker='s', color='#e74c3c', label="Türkçe")
-                ax.plot(df_ogr['sinav_adi'], df_ogr['matematik_net'], marker='^', color='#27ae60', label="Matematik")
-                ax.plot(df_ogr['sinav_adi'], df_ogr['fen_net'], marker='o', color='#f39c12', label="Fen")
-                ax.plot(df_ogr['sinav_adi'], df_ogr['sosyal_net'], marker='d', color='#8e44ad', label="Sosyal")
-                ax.legend(loc="upper left")
-                ax.set_ylim(0, 42)
-
-            ax.set_ylabel("Net")
-            ax.grid(True, linestyle='--', alpha=0.5)
-            plt.xticks(rotation=15)
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
-            buf.seek(0)
-            fig_img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-
-            with c1:
-                st.subheader("📈 Net Gelişim Grafiği")
-                st.pyplot(fig)
-
-            with c2:
-                aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(conn, secilen_norm)
-
-                st.subheader("⚠️ Acil Müdahale Gereken Konular")
-                if aktif_eksikler:
-                    for konu, tekrar in aktif_eksikler:
-                        st.error(f"📌 **{konu}** ({tekrar} Sınavda Yanlış)")
-                else:
-                    st.success("🎉 Aktif eksik konu bulunmuyor!")
-
-                st.subheader("🎉 Başarıyla Halledilen Konular")
-                if tamamlanan_konular:
-                    for konu in tamamlanan_konular:
-                        st.success(f"✅ **{konu}** (Son sınavda başarıyla çözüldü)")
-                else:
-                    st.info("Henüz kazanılan konu kaydı bulunmuyor.")
-
-            st.markdown("---")
-            veli_notu = st.text_area("✍️ Rehberlik / Öğretmen Veli Değerlendirme Notu (Karnede Görünür):", height=80)
-
-            html_report = generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, secilen_ogr_adi, fig_img_base64, veli_notu)
-            
-            st.download_button(
-                label=f"📄 {secilen_ogr_adi} Karne Raporunu İndir (PDF/HTML)",
-                data=html_report,
-                file_name=f"{secilen_norm}_Gelisim_Karnesi.html",
-                mime="text/html",
-                type="primary",
-                use_container_width=True
-            )
-
-            st.subheader("📋 Sınav Geçmiş Tablosu")
-            st.dataframe(df_ogr[['sinav_adi', 'tarih', 'turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'toplam_net', 'tyt_puan']], use_container_width=True)
+        render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True)
     else:
         st.warning("Bu kriterlere uygun öğrenci bulunamadı.")
 
-    conn.close()
+# --- 3. MENÜ: ÖĞRENCİ & VELİ KENDİ KARNESİ ---
+elif secim == "🎓 Gelişim & Analiz Karnem" and st.session_state['role'] in ['ogrenci', 'veli']:
+    st.title(f"🎓 Öğrenci Gelişim Karnesi")
+    secilen_norm = st.session_state['user_info']['norm_adi']
+    if secilen_norm:
+        conn = sqlite3.connect("sinav_takip.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT ogrenci_adi FROM ogrenci_sonuclari WHERE ogrenci_adi_norm = ? LIMIT 1", (secilen_norm,))
+        row = cursor.fetchone()
+        conn.close()
+        ogr_display_name = row[0] if row else "Öğrenci"
+        render_student_report(secilen_norm, ogr_display_name, allow_notes=False)
+    else:
+        st.error("Hesabınızla eşleşen öğrenci kaydı bulunamadı. Lütfen yönetimle iletişime geçin.")
 
-# --- 3. MENÜ: GENEL OKUL DURUMU (ADMİN & ÖĞRETMEN) ---
-elif secim == "🏫 Okul Genel Durumu & Dereceler":
+# --- 4. MENÜ: GENEL OKUL DURUMU (ADMİN & ÖĞRETMEN) ---
+elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🏫 Okul Genel Başarı Analizi ve Derece Listeleri")
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
@@ -620,15 +652,15 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler":
         )
     conn.close()
 
-# --- 4. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
-elif secim == "🔥 Okul Konu/Kazanım Analizi":
+# --- 5. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
+elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🔥 Okul & Sınıf Geneli En Çok Yanlış Yapılan Konular")
 
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
 
     cursor.execute("SELECT sinav_adi FROM sinavlar")
-    sinavlar = ["Tüm Sınavlar"] + [s[0] for s in cursor.fetchall()]
+    sinavlar = ["Tüm Sınıvlar"] + [s[0] for s in cursor.fetchall()]
 
     col1, col2 = st.columns(2)
     with col1:
@@ -638,7 +670,7 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
         siniflar = ["Tüm Sınıflar"] + [s[0] for s in cursor.fetchall() if s[0]]
         secilen_sinif = st.selectbox("Sınıf Seçiniz:", siniflar)
 
-    if secilen_sinav == "Tüm Sınavlar" and secilen_sinif == "Tüm Sınıflar":
+    if secilen_sinav == "Tüm Sınıvlar" and secilen_sinif == "Tüm Sınıflar":
         query = '''
         SELECT konu_kazanim as 'Konu / Kazanım', COUNT(*) as 'Yanlış/Boş Sayısı'
         FROM ogrenci_eksikleri
@@ -652,7 +684,7 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
         FROM ogrenci_eksikleri oe
         JOIN sinavlar s ON oe.sinav_id = s.sinav_id
         JOIN ogrenci_sonuclari os ON (os.sinav_id = oe.sinav_id AND os.ogrenci_adi_norm = oe.ogrenci_adi_norm)
-        WHERE (s.sinav_adi = ? OR ? = 'Tüm Sınavlar') AND (os.sinif = ? OR ? = 'Tüm Sınıflar')
+        WHERE (s.sinav_adi = ? OR ? = 'Tüm Sınıvlar') AND (os.sinif = ? OR ? = 'Tüm Sınıflar')
         GROUP BY oe.konu_kazanim
         ORDER BY COUNT(*) DESC LIMIT 10
         '''
@@ -675,7 +707,63 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
 
     conn.close()
 
-# --- 5. MENÜ: KURUM AYARLARI VE LOGO (SADECE ADMİN) ---
+# --- 6. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ (ADMİN) ---
+elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
+    st.title("👥 Öğrenci & Veli Hesap Tanımlama Paneli")
+
+    conn = sqlite3.connect("sinav_takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+    ogrenciler = cursor.fetchall()
+
+    if ogrenciler:
+        ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
+        
+        st.subheader("➕ Yeni Öğrenci veya Veli Hesabı Oluştur")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            secilen_ogr = st.selectbox("Hesabın Bağı / İlişkili Olduğu Öğrenci:", list(ogr_dict.keys()))
+            hesap_turu = st.selectbox("Hesap Türü / Rol:", ["ogrenci", "veli"])
+        
+        with col2:
+            yeni_username = st.text_input("Kullanıcı Adı:", placeholder="Örn: ahmet123 veya ahmet_veli")
+            yeni_password = st.text_input("Şifre:", type="password", value="123456")
+
+        if st.button("➕ Hesabı Oluştur", type="primary"):
+            if yeni_username and yeni_password:
+                try:
+                    norm_adi = ogr_dict[secilen_ogr]
+                    cursor.execute(
+                        "INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm) VALUES (?, ?, ?, ?)",
+                        (yeni_username.strip(), yeni_password.strip(), hesap_turu, norm_adi)
+                    )
+                    conn.commit()
+                    st.success(f"✅ '{secilen_ogr}' öğrencisi için **{hesap_turu.upper()}** hesabı başarıyla oluşturuldu!")
+                except sqlite3.IntegrityError:
+                    st.error("⚠️ Bu kullanıcı adı zaten kullanılıyor! Lütfen başka bir kullanıcı adı girin.")
+            else:
+                st.warning("Lütfen kullanıcı adı ve şifre alanlarını doldurun.")
+
+        st.markdown("---")
+        st.subheader("📋 Sistemde Kayıtlı Kullanıcı Hesapları")
+        
+        users_df = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm FROM kullanicilar WHERE rol IN ('ogrenci', 'veli')", conn)
+        st.dataframe(users_df, use_container_width=True)
+
+        silinecek_user_id = st.number_input("Silmek İstediğiniz Kullanıcı ID (Hesap ID):", min_value=1, step=1)
+        if st.button("🗑️ Hesabı Sil"):
+            cursor.execute("DELETE FROM kullanicilar WHERE id = ?", (silinecek_user_id,))
+            conn.commit()
+            st.success("Hesap silindi.")
+            st.rerun()
+
+    else:
+        st.warning("Sistemde henüz kayıtlı öğrenci verisi yok. Önce bir sınav yüklemelisiniz.")
+    
+    conn.close()
+
+# --- 7. MENÜ: KURUM AYARLARI VE LOGO (ADMİN) ---
 elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
     st.title("⚙️ Kurum ve Logo Ayarları")
 
@@ -713,7 +801,7 @@ elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'a
         if mevcut_logo:
             st.image(base64.b64decode(mevcut_logo), width=220)
 
-# --- 6. MENÜ: SINAV SİLME (SADECE ADMİN) ---
+# --- 8. MENÜ: SINAV SİLME (ADMİN) ---
 elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
     st.title("🗑️ Sınav Yönetim ve Silme Paneli")
     conn = sqlite3.connect("sinav_takip.db")
@@ -724,7 +812,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
     if sinavlar:
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(silinecek_label if 'silinecek_label' in locals() else sinav_dict.keys()))
         silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
