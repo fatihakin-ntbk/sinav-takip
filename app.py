@@ -1,4 +1,34 @@
 import streamlit as st
+
+# 1. Sayfa genişliğini yaymak istersen (isteğe bağlı ama logoların daha şık durmasını sağlar)
+# st.set_page_config(layout="wide") # Eğer kodunda zaten varsa tekrar ekleme
+
+# ---------------------------------------------------------
+# ÜST BAŞLIK (HEADER) - Tüm rollerde ve menülerde ortak görünür
+# ---------------------------------------------------------
+col_logo, col_slogan = st.columns([1, 4], vertical_alignment="center")
+
+with col_logo:
+    # Logo görseli (Local dosya yolu veya web URL'si verebilirsin)
+    st.image("logo.png", width=120)  # Genişliği sayfanı rahatsız etmeyecek şekilde ayarlayabilirsin
+
+with col_slogan:
+    # Slogan metni
+    st.markdown(
+        """
+        <h2 style='margin:0; padding:0; color: #1F2937;'>Geleceğin Eğitimi, Bugünün Analizi</h2>
+        <p style='margin:0; padding:0; color: #6B7280; font-size: 16px;'>Başarıya Giden Yolda Doğru Takip</p>
+        """, 
+        unsafe_allow_html=True
+    )
+
+# İsteğe bağlı: Logo ile içerik arasına ince şık bir çizgi
+st.divider()
+
+# ---------------------------------------------------------
+# BURADAN SONRA SENİN MEVCUT KODLARIN (Giriş kontrolü, Roller, Menüler vs.) BAŞLAR
+# ---------------------------------------------------------
+import streamlit as st
 import pandas as pd
 import sqlite3
 import pypdf
