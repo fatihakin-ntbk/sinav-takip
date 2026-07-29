@@ -6,6 +6,7 @@ import re
 import os
 import base64
 import matplotlib.pyplot as plt
+import numpy as np
 import io
 import urllib.parse
 
@@ -618,6 +619,7 @@ if st.session_state['role'] == 'admin':
         "📱 Veli Bilgilendirme & WhatsApp/SMS",
         "🎯 Hedef Belirleme & Takip",
         "🏫 Okul Genel Durumu & Dereceler", 
+        "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım",
         "🔥 Okul Konu/Kazanım Analizi", 
         "👥 Öğrenci & Veli Hesap Yönetimi",
         "⚙️ Kurum Ayarları & Logo",
@@ -629,6 +631,7 @@ elif st.session_state['role'] == 'ogretmen':
         "📱 Veli Bilgilendirme & WhatsApp/SMS",
         "🎯 Hedef Belirleme & Takip",
         "🏫 Okul Genel Durumu & Dereceler", 
+        "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım",
         "🔥 Okul Konu/Kazanım Analizi"
     ]
 else:
@@ -970,7 +973,7 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
                 st.balloons()
                 st.success(f"🎉 Harika gidiyorsun! Son sınav netin ({son_net:.2f}), hedefin olan {h_net:.2f} netin üzerinde!")
             else:
-                st.warning(f"💡 Target'a ulaşmak için **{abs(fark_net):.2f} net** daha artırman gerekiyor. Eksik konularına odaklanarak bu farkı kapatabilirsin!")
+                st.warning(f"💡 Hedefe ulaşmak için **{abs(fark_net):.2f} net** daha artırman gerekiyor. Eksik konularına odaklanarak bu farkı kapatabilirsin!")
 
     conn.close()
 
@@ -1042,7 +1045,127 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] 
         )
     conn.close()
 
-# --- 7. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
+# --- 7. MENÜ: YENİ EKLENEN RADAR VE DAĞILIM GRAFİKLERİ ---
+elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım" and st.session_state['role'] in ['admin', 'ogretmen']:
+    st.title("🕸️ Sınıf Bazlı Karşılaştırmalı Radar & Net Dağılım Analizi")
+
+    conn = sqlite3.connect("sinav_takip.db")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT sinav_adi FROM sinavlar ORDER BY tarih DESC")
+    sinavlar = [s[0] for s in cursor.fetchall()]
+
+    if sinavlar:
+        secilen_sinav = st.selectbox("Analiz Edilecek Deneme Sınavını Seçiniz:", sinavlar)
+        
+        # Sınavdaki Sınıfları Getir
+        query = '''
+        SELECT os.sinif, 
+               AVG(os.turkce_net) as turkce, 
+               AVG(os.sosyal_net) as sosyal, 
+               AVG(os.matematik_net) as mat, 
+               AVG(os.fen_net) as fen,
+               AVG(os.toplam_net) as toplam,
+               AVG(os.tyt_puan) as puan,
+               COUNT(*) as ogr_sayisi
+        FROM ogrenci_sonuclari os
+        JOIN sinavlar s ON os.sinav_id = s.sinav_id
+        WHERE s.sinav_adi = ?
+        GROUP BY os.sinif
+        '''
+        df_sinif_ort = pd.read_sql_query(query, conn, params=(secilen_sinav,))
+
+        if not df_sinif_ort.empty:
+            st.markdown("### 📋 Sınıf Ortalamaları Özet Tablosu")
+            df_display = df_sinif_ort.rename(columns={
+                'sinif': 'Sınıf', 'turkce': 'Türkçe Net', 'sosyal': 'Sosyal Net', 
+                'mat': 'Matematik Net', 'fen': 'Fen Net', 'toplam': 'Toplam Net', 
+                'puan': 'TYT Puanı', 'ogr_sayisi': 'Öğrenci Sayısı'
+            })
+            st.dataframe(df_display.style.highlight_max(axis=0, color='#c6f6d5', subset=['Türkçe Net', 'Sosyal Net', 'Matematik Net', 'Fen Net', 'Toplam Net', 'TYT Puanı']), use_container_width=True)
+
+            st.markdown("---")
+
+            # Karşılaştırılacak Sınıfları Seçme
+            tum_siniflar = df_sinif_ort['sinif'].tolist()
+            secilen_siniflar = st.multiselect("Radar Grafikte Karşılaştırılacak Sınıfları Seçin:", tum_siniflar, default=tum_siniflar[:3] if len(tum_siniflar)>=3 else tum_siniflar)
+
+            if secilen_siniflar:
+                c_rad1, c_rad2 = st.columns([1.1, 0.9])
+
+                with c_rad1:
+                    st.subheader("🕸️ Ders Bazlı Radar (Örümcek) Grafiği")
+                    
+                    categories = ['Türkçe', 'Sosyal', 'Matematik', 'Fen']
+                    N = len(categories)
+                    
+                    angles = [n / float(N) * 2 * np.pi for n in range(N)]
+                    angles += angles[:1] # Daireyi kapatmak için
+
+                    fig_radar, ax_radar = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+                    
+                    ax_radar.set_theta_offset(np.pi / 2)
+                    ax_radar.set_theta_direction(-1)
+
+                    plt.xticks(angles[:-1], categories, color='grey', size=11, fontweight='bold')
+                    ax_radar.set_rlabel_position(0)
+                    plt.yticks([10, 20, 30, 40], ["10 Net", "20 Net", "30 Net", "40 Net"], color="grey", size=8)
+                    plt.ylim(0, 40)
+
+                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+
+                    for i, s_adi in enumerate(secilen_siniflar):
+                        row = df_sinif_ort[df_sinif_ort['sinif'] == s_adi].iloc[0]
+                        values = [row['turkce'], row['sosyal'], row['mat'], row['fen']]
+                        values += values[:1]
+                        
+                        color = colors[i % len(colors)]
+                        ax_radar.plot(angles, values, linewidth=2, linestyle='solid', label=f"Sınıf: {s_adi}", color=color)
+                        ax_radar.fill(angles, values, color=color, alpha=0.15)
+
+                    plt.legend(loc='upper right', bbox_to_anchor=(0.1, 0.1))
+                    st.pyplot(fig_radar)
+
+                with c_rad2:
+                    st.subheader("📦 Sınıf Toplam Net Dağılımı (Boxplot)")
+                    st.caption("Çizgi: Medyan (Orta değer) | Kutu: Öğrenci Yoğunluğu")
+
+                    # Detay Öğrenci Verilerini Çek
+                    query_detay = '''
+                    SELECT os.sinif, os.toplam_net
+                    FROM ogrenci_sonuclari os
+                    JOIN sinavlar s ON os.sinav_id = s.sinav_id
+                    WHERE s.sinav_adi = ? AND os.sinif IN ({})
+                    '''.format(','.join(['?']*len(secilen_siniflar)))
+
+                    df_detay = pd.read_sql_query(query_detay, conn, params=[secilen_sinav] + secilen_siniflar)
+
+                    fig_box, ax_box = plt.subplots(figsize=(6, 5.5))
+                    
+                    data_to_plot = [df_detay[df_detay['sinif'] == s]['toplam_net'].dropna().values for s in secilen_siniflar]
+                    
+                    box = ax_box.boxplot(data_to_plot, patch_artist=True, labels=secilen_siniflar)
+
+                    for patch, color in zip(box['boxes'], colors[:len(secilen_siniflar)]):
+                        patch.set_facecolor(color)
+                        patch.set_alpha(0.6)
+
+                    ax_box.set_ylabel("Toplam Net")
+                    ax_box.set_title(f"{secilen_sinav} - Net Dağılımı", fontsize=11, fontweight='bold')
+                    ax_box.grid(True, linestyle='--', alpha=0.5)
+                    st.pyplot(fig_box)
+
+            else:
+                st.warning("Lütfen grafik oluşturmak için en az bir sınıf seçin.")
+
+        else:
+            st.warning("Bu sınava ait veriler okunamadı.")
+    else:
+        st.warning("Sistemde henüz kayıtlı sınav bulunmuyor.")
+
+    conn.close()
+
+# --- 8. MENÜ: OKUL KONU ANALİZİ (ADMİN & ÖĞRETMEN) ---
 elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🔥 Okul & Sınıf Geneli En Çok Yanlış Yapılan Konular")
 
@@ -1097,7 +1220,7 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in 
 
     conn.close()
 
-# --- 8. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ (ADMİN) ---
+# --- 9. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ (ADMİN) ---
 elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
     st.title("👥 Öğrenci & Veli Hesap Tanımlama Paneli")
 
@@ -1176,7 +1299,7 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
     
     conn.close()
 
-# --- 9. MENÜ: KURUM AYARLARI VE LOGO (ADMİN) ---
+# --- 10. MENÜ: KURUM AYARLARI VE LOGO (ADMİN) ---
 elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
     st.title("⚙️ Kurum ve Logo Ayarları")
 
@@ -1214,7 +1337,7 @@ elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'a
         if mevcut_logo:
             st.image(base64.b64decode(mevcut_logo), width=220)
 
-# --- 10. MENÜ: SINAV SİLME (ADMİN) ---
+# --- 11. MENÜ: SINAV SİLME (ADMİN) ---
 elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
     st.title("🗑️ Sınav Yönetim ve Silme Paneli")
     conn = sqlite3.connect("sinav_takip.db")
