@@ -235,7 +235,14 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 df_son_eksik = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]
                 if not df_son_eksik.empty:
                     df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
-                    st.dataframe(df_eksik_ozet, use_container_width=True)
+                    
+                    # 🔴 Kırmızı Arka Plan Stil Uygulaması
+                    styled_eksik = df_eksik_ozet.style.set_properties(**{
+                        'background-color': '#ffe5e5',
+                        'color': '#900c3f',
+                        'border-color': '#ffb3b3'
+                    })
+                    st.dataframe(styled_eksik, use_container_width=True)
                 else:
                     st.success("🎉 Harika! Son sınavda tespit edilen yeni bir konu eksiği yok.")
             else:
@@ -257,7 +264,14 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 if halledilen_konular:
                     df_halledilen = df_tum_eksikler[df_tum_eksikler['konu_kazanim'].isin(halledilen_konular)][['ders', 'konu_kazanim']].drop_duplicates()
                     df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı (Halledildi)'
-                    st.dataframe(df_halledilen, use_container_width=True)
+                    
+                    # 🟢 Yeşil Arka Plan Stil Uygulaması
+                    styled_halledilen = df_halledilen.style.set_properties(**{
+                        'background-color': '#e6ffe6',
+                        'color': '#006600',
+                        'border-color': '#b3ffb3'
+                    })
+                    st.dataframe(styled_halledilen, use_container_width=True)
                 else:
                     st.info("Geçmiş sınavlarda yanlış yapılıp son sınavda düzeltilen henüz bir konu bulunmuyor. Denemeler arttıkça burası güncellenecektir.")
             else:
