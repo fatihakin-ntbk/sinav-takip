@@ -60,6 +60,14 @@ def init_db():
         yayin_evi TEXT,
         sinav_turu TEXT DEFAULT 'TYT'
     )''')
+
+    # Migration (Var olan veritabanında eksik sütun varsa otomatik ekler)
+    cursor.execute("PRAGMA table_info(sinavlar)")
+    s_cols = [c[1] for c in cursor.fetchall()]
+    if 'sinav_turu' not in s_cols:
+        cursor.execute("ALTER TABLE sinavlar ADD COLUMN sinav_turu TEXT DEFAULT 'TYT'")
+    if 'yayin_evi' not in s_cols:
+        cursor.execute("ALTER TABLE sinavlar ADD COLUMN yayin_evi TEXT")
     
     # Öğrenci Sonuçları Tablosu (TYT + AYT Destekli)
     cursor.execute('''
@@ -101,12 +109,6 @@ def init_db():
         
         FOREIGN KEY (sinav_id) REFERENCES sinavlar(sinav_id) ON DELETE CASCADE
     )''')
-
-    # Migration (Var olan veritabanına eksik AYT sütunlarını güvenle ekler)
-    cursor.execute("PRAGMA table_info(sinavlar)")
-    s_cols = [c[1] for c in cursor.fetchall()]
-    if 'sinav_turu' not in s_cols:
-        cursor.execute("ALTER TABLE sinavlar ADD COLUMN sinav_turu TEXT DEFAULT 'TYT'")
 
     cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
     os_cols = [c[1] for c in cursor.fetchall()]
@@ -214,28 +216,20 @@ def detect_subject_from_topic(topic_str):
     """Konu başlığındaki anahtar kelimelerden ders adını tahmin eder (TYT + AYT Uyumlu)."""
     t = topic_str.lower()
     
-    # Türkçe / Edebiyat
     if any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'ses bilgisi', 'fiil', 'isim', 'sifat', 'zarf', 'edat', 'anlatim', 'metin', 'edebiyat', 'turkce', 'şiir', 'roman', 'divan', 'tanzimat', 'servet-i fünun', 'cumhuriyet']):
         return "Türkçe / Edebiyat"
-    # Matematik / Geometri
     elif any(k in t for k in ['üslü', 'köklü', 'fonksiyon', 'polinom', 'çarpanlar', 'denklem', 'eşitsizlik', 'trigonometri', 'türev', 'integral', 'limit', 'logaritma', 'oranti', 'yüzde', 'problem', 'küme', 'sayı', 'olasilik', 'permütasyon', 'kombinasyon', 'üçgen', 'dörtgen', 'çember', 'daire', 'analitik', 'geometri', 'matematik', 'diziler', 'parabol']):
         return "Matematik"
-    # Fizik
     elif any(k in t for k in ['kuvvet', 'hareket', 'vektör', 'dinamik', 'iş', 'güç', 'enerji', 'atış', 'tork', 'denge', 'elektrik', 'manyetizma', 'dalga', 'optik', 'ayna', 'mercek', 'ısı', 'sıcaklık', 'basınç', 'kaldırma', 'fizik', 'atom', 'fotoelektrik', 'modern fizik']):
         return "Fizik"
-    # Kimya
     elif any(k in t for k in ['mol', 'çözelti', 'gaz', 'tepkim', 'asit', 'baz', 'tuz', 'kimya', 'periyodik', 'bağ', 'organik', 'karbon', 'elektrokimya', 'termodinamik', 'hibritleşme', 'denge']):
         return "Kimya"
-    # Biyoloji
     elif any(k in t for k in ['hücre', 'mitoz', 'mayoz', 'kalıtım', 'dna', 'rna', 'sistem', 'solunum', 'dolaşım', 'sindirim', 'boşaltım', 'sinir', 'hormon', 'ekoloji', 'biyoloji', 'canlı', 'bitki', 'photosentez', 'kemosentez']):
         return "Biyoloji"
-    # Tarih
     elif any(k in t for k in ['tarih', 'osmanlı', 'inkılap', 'savaş', 'devlet', 'ilk çağ', 'orta çağ', 'ilke', 'milli mücadele', 'antlaşma', 'beylik']):
         return "Tarih"
-    # Coğrafya
     elif any(k in t for k in ['harita', 'iklim', 'nüfus', 'yer şekilleri', 'coğrafya', 'dünya', 'kıta', 'rüzgar', 'kayaç', 'afet', 'biyoçeşitlilik', 'ekosistem']):
         return "Coğrafya"
-    # Felsefe & Din
     elif any(k in t for k in ['felsefe', 'bilgi', 'ahlak', 'din', 'inanç', 'ibadet', 'peygamber', 'mantık', 'psikoloji', 'sosyoloji']):
         return "Felsefe / Din"
     
@@ -266,12 +260,10 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     st.header(f"👤 Öğrenci: {ogr_adi}")
     
-    # Hedef Göstergesi
     hedef = get_ogrenci_hedef(norm_adi)
     if hedef:
         st.info(f"🎯 **Hedef Bölüm:** {hedef['bolum']} | **Alan:** {hedef.get('alan', 'SAY')} | **Hedef Net:** {hedef['net']} | **Hedef Puan:** {hedef['puan']}")
     
-    # Sınav Sonuçları
     df_sonuc = pd.read_sql_query('''
         SELECT s.sinav_id, s.sinav_adi, s.tarih, s.sinav_turu,
                os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net as tyt_toplam, os.tyt_puan,
@@ -288,7 +280,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.subheader("📈 Sınav Net Gelişimi (TYT & AYT)")
         fig, ax = plt.subplots(figsize=(10, 4))
         
-        # TYT / AYT Ayrı Çizimler
         df_tyt = df_sonuc[df_sonuc['tyt_toplam'] > 0]
         df_ayt = df_sonuc[df_sonuc['ayt_toplam'] > 0]
         
@@ -309,21 +300,17 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.subheader("📊 Sınav Detay Tablosu")
         st.dataframe(df_sonuc.drop(columns=['sinav_id']), use_container_width=True)
         
-        # --- AKILLI DERS & KONU GELİŞİM ANALİZİ ---
         st.markdown("---")
         c_eksik, c_basari = st.columns(2)
         
-        # Son Sınav ID
         son_sinav_id = df_sonuc['sinav_id'].iloc[-1]
         
-        # Öğrencinin TÜM sınavlardaki eksik kaydı
         df_tum_eksikler = pd.read_sql_query('''
             SELECT sinav_id, ders, konu_kazanim
             FROM ogrenci_eksikleri
             WHERE ogrenci_adi_norm = ?
         ''', conn, params=(norm_adi,))
 
-        # Ders adı "Genel" kalan verileri otomatik düzeltelim
         if not df_tum_eksikler.empty:
             df_tum_eksikler['ders'] = df_tum_eksikler.apply(
                 lambda r: detect_subject_from_topic(r['konu_kazanim']) if r['ders'] in ['Genel', 'Genel / Diğer', ''] else r['ders'],
@@ -338,7 +325,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                     df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
                     df_eksik_ozet.columns = ['Ders', 'Konu / Kazanım', 'Tekrar Sayısı']
                     
-                    # 🔴 Kırmızı Arka Plan Stil Uygulaması
                     styled_eksik = df_eksik_ozet.style.set_properties(**{
                         'background-color': '#ffe5e5',
                         'color': '#900c3f',
@@ -364,7 +350,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                     df_halledilen.columns = ['Ders', 'Konu / Kazanım']
                     df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı'
                     
-                    # 🟢 Yeşil Arka Plan Stil Uygulaması
                     styled_halledilen = df_halledilen.style.set_properties(**{
                         'background-color': '#e6ffe6',
                         'color': '#006600',
@@ -379,7 +364,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     else:
         st.warning("Bu öğrenciye ait girilmiş sınav sonucu bulunamadı.")
         
-    # Öğretmen Notları Bölümü
     if allow_notes:
         st.markdown("---")
         st.subheader("📝 Öğretmen Görüş ve Notları")
@@ -560,7 +544,6 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                             row.get('ayt soz puan', row.get('soz_puan', 0))
                         ))
                 
-                # PDF Analizlerini İşleme (Akıllı Ders Tespiti İle)
                 if pdf_files:
                     try:
                         import pypdf
@@ -580,7 +563,6 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                                     konu_temiz = parts[0].strip()
                                     sorular = parts[1].strip() if len(parts) > 1 else ""
                                     
-                                    # Akıllı Ders Tespiti
                                     tespit_edilen_ders = detect_subject_from_topic(konu_temiz)
                                     
                                     cursor.execute('''
