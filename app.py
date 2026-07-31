@@ -61,7 +61,7 @@ def init_db():
         sinav_turu TEXT DEFAULT 'TYT'
     )''')
 
-    # Migration (Var olan veritabanında eksik sütun varsa otomatik ekler)
+    # Migration
     cursor.execute("PRAGMA table_info(sinavlar)")
     s_cols = [c[1] for c in cursor.fetchall()]
     if 'sinav_turu' not in s_cols:
@@ -69,7 +69,7 @@ def init_db():
     if 'yayin_evi' not in s_cols:
         cursor.execute("ALTER TABLE sinavlar ADD COLUMN yayin_evi TEXT")
     
-    # Öğrenci Sonuçları Tablosu (TYT + AYT Destekli)
+    # Öğrenci Sonuçları Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_sonuclari (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,7 +193,7 @@ def init_db():
         logo_base64 TEXT
     )''')
     
-    # Varsayılan Yöneticileri Ekle / Güncelle
+    # Varsayılan Yöneticiler
     cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (1, 'admin', 'admin123', 'admin')")
     cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (2, 'ogretmen', 'ogretmen123', 'ogretmen')")
     
@@ -213,7 +213,6 @@ def normalize_name(text):
     return ' '.join(text.split())
 
 def detect_subject_from_topic(topic_str):
-    """Konu başlığındaki anahtar kelimelerden ders adını tahmin eder (TYT + AYT Uyumlu)."""
     t = topic_str.lower()
     
     if any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'ses bilgisi', 'fiil', 'isim', 'sifat', 'zarf', 'edat', 'anlatim', 'metin', 'edebiyat', 'turkce', 'şiir', 'roman', 'divan', 'tanzimat', 'servet-i fünun', 'cumhuriyet']):
@@ -264,6 +263,9 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     if hedef:
         st.info(f"🎯 **Hedef Bölüm:** {hedef['bolum']} | **Alan:** {hedef.get('alan', 'SAY')} | **Hedef Net:** {hedef['net']} | **Hedef Puan:** {hedef['puan']}")
     
+    # --- YENİ EKLENEN: DİNAMİK SINAV TÜRÜ FİLTRESİ ---
+    view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
+    
     df_sonuc = pd.read_sql_query('''
         SELECT s.sinav_id, s.sinav_adi, s.tarih, s.sinav_turu,
                os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net as tyt_toplam, os.tyt_puan,
@@ -276,16 +278,22 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         ORDER BY s.tarih ASC, s.sinav_id ASC
     ''', conn, params=(norm_adi,))
     
-    if not df_sonuc.empty:
-        st.subheader("📈 Sınav Net Gelişimi (TYT & AYT)")
+    # Seçilen türe göre veriyi filtrele
+    if view_type != "Tümü":
+        df_filtered = df_sonuc[df_sonuc['sinav_turu'] == view_type]
+    else:
+        df_filtered = df_sonuc.copy()
+
+    if not df_filtered.empty:
+        st.subheader(f"📈 Sınav Net Gelişimi ({view_type})")
         fig, ax = plt.subplots(figsize=(10, 4))
         
-        df_tyt = df_sonuc[df_sonuc['tyt_toplam'] > 0]
-        df_ayt = df_sonuc[df_sonuc['ayt_toplam'] > 0]
+        df_tyt = df_filtered[df_filtered['sinav_turu'] == 'TYT']
+        df_ayt = df_filtered[df_filtered['sinav_turu'] == 'AYT']
         
-        if not df_tyt.empty:
+        if view_type in ["Tümü", "TYT"] and not df_tyt.empty:
             ax.plot(df_tyt['sinav_adi'], df_tyt['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
-        if not df_ayt.empty:
+        if view_type in ["Tümü", "AYT"] and not df_ayt.empty:
             ax.plot(df_ayt['sinav_adi'], df_ayt['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
             
         if hedef and hedef['net']:
@@ -298,12 +306,23 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.pyplot(fig)
         
         st.subheader("📊 Sınav Detay Tablosu")
-        st.dataframe(df_sonuc.drop(columns=['sinav_id']), use_container_width=True)
+        
+        # Seçilen türe göre sütunları düzenleme (Karmaşayı önleme)
+        cols_to_show = ['sinav_adi', 'tarih', 'sinav_turu']
+        if view_type == "TYT":
+            cols_to_show += ['turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'tyt_toplam', 'tyt_puan', 'kurum_sirasi']
+        elif view_type == "AYT":
+            cols_to_show += ['ayt_mat_net', 'ayt_fizik_net', 'ayt_kimya_net', 'ayt_biyo_net', 'ayt_edebiyat_net', 'ayt_tarih1_net', 'ayt_cogr1_net', 'ayt_toplam', 'ayt_say_puan', 'ayt_ea_puan', 'kurum_sirasi']
+        else:
+            cols_to_show += ['tyt_toplam', 'ayt_toplam', 'tyt_puan', 'ayt_say_puan', 'kurum_sirasi']
+            
+        existing_cols = [c for c in cols_to_show if c in df_filtered.columns]
+        st.dataframe(df_filtered[existing_cols], use_container_width=True)
         
         st.markdown("---")
         c_eksik, c_basari = st.columns(2)
         
-        son_sinav_id = df_sonuc['sinav_id'].iloc[-1]
+        son_sinav_id = df_filtered['sinav_id'].iloc[-1]
         
         df_tum_eksikler = pd.read_sql_query('''
             SELECT sinav_id, ders, konu_kazanim
@@ -362,7 +381,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 st.info("Henüz karşılaştırma yapılacak yeterli eksik veri analizi yok.")
                 
     else:
-        st.warning("Bu öğrenciye ait girilmiş sınav sonucu bulunamadı.")
+        st.warning(f"Bu öğrenciye ait {view_type} türünde girilmiş bir sınav sonucu bulunamadı.")
         
     if allow_notes:
         st.markdown("---")
