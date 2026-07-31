@@ -58,10 +58,18 @@ def init_db():
         sinav_adi TEXT NOT NULL,
         tarih DATE,
         yayin_evi TEXT,
-        sinav_turu TEXT
+        sinav_turu TEXT DEFAULT 'TYT'
     )''')
+
+    # Migration (Sınavlar tablosuna eksik sütunları güvenle ekler)
+    cursor.execute("PRAGMA table_info(sinavlar)")
+    s_cols = [c[1] for c in cursor.fetchall()]
+    if 'yayin_evi' not in s_cols:
+        cursor.execute("ALTER TABLE sinavlar ADD COLUMN yayin_evi TEXT")
+    if 'sinav_turu' not in s_cols:
+        cursor.execute("ALTER TABLE sinavlar ADD COLUMN sinav_turu TEXT DEFAULT 'TYT'")
     
-    # Öğrenci Sonuçları Tablosu
+    # Öğrenci Sonuçları Tablosu (TYT + AYT Destekli)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_sonuclari (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,14 +79,53 @@ def init_db():
         sinif TEXT,
         kurum_sirasi INTEGER,
         genel_sira INTEGER,
-        turkce_d REAL, turkce_y REAL, turkce_net REAL,
-        sosyal_d REAL, sosyal_y REAL, sosyal_net REAL,
-        matematik_d REAL, matematik_y REAL, matematik_net REAL,
-        fen_d REAL, fen_y REAL, fen_net REAL,
-        toplam_net REAL,
-        tyt_puan REAL,
+        
+        -- TYT Netleri
+        turkce_d REAL, turkce_y REAL, turkce_net REAL DEFAULT 0,
+        sosyal_d REAL, sosyal_y REAL, sosyal_net REAL DEFAULT 0,
+        matematik_d REAL, matematik_y REAL, matematik_net REAL DEFAULT 0,
+        fen_d REAL, fen_y REAL, fen_net REAL DEFAULT 0,
+        toplam_net REAL DEFAULT 0,
+        tyt_puan REAL DEFAULT 0,
+        
+        -- AYT Netleri
+        ayt_mat_net REAL DEFAULT 0,
+        ayt_fizik_net REAL DEFAULT 0,
+        ayt_kimya_net REAL DEFAULT 0,
+        ayt_biyo_net REAL DEFAULT 0,
+        ayt_edebiyat_net REAL DEFAULT 0,
+        ayt_tarih1_net REAL DEFAULT 0,
+        ayt_cogr1_net REAL DEFAULT 0,
+        ayt_tarih2_net REAL DEFAULT 0,
+        ayt_cogr2_net REAL DEFAULT 0,
+        ayt_felsefe_net REAL DEFAULT 0,
+        ayt_din_net REAL DEFAULT 0,
+        ayt_toplam_net REAL DEFAULT 0,
+        
+        -- AYT Puanları
+        ayt_say_puan REAL DEFAULT 0,
+        ayt_ea_puan REAL DEFAULT 0,
+        ayt_soz_puan REAL DEFAULT 0,
+        
         FOREIGN KEY (sinav_id) REFERENCES sinavlar(sinav_id) ON DELETE CASCADE
     )''')
+
+    # Migration (ogrenci_sonuclari tablosuna AYT sütunlarını güvenle ekler)
+    cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
+    os_cols = [c[1] for c in cursor.fetchall()]
+    ayt_fields = {
+        'ayt_mat_net': 'REAL DEFAULT 0', 'ayt_fizik_net': 'REAL DEFAULT 0',
+        'ayt_kimya_net': 'REAL DEFAULT 0', 'ayt_biyo_net': 'REAL DEFAULT 0',
+        'ayt_edebiyat_net': 'REAL DEFAULT 0', 'ayt_tarih1_net': 'REAL DEFAULT 0',
+        'ayt_cogr1_net': 'REAL DEFAULT 0', 'ayt_tarih2_net': 'REAL DEFAULT 0',
+        'ayt_cogr2_net': 'REAL DEFAULT 0', 'ayt_felsefe_net': 'REAL DEFAULT 0',
+        'ayt_din_net': 'REAL DEFAULT 0', 'ayt_toplam_net': 'REAL DEFAULT 0',
+        'ayt_say_puan': 'REAL DEFAULT 0', 'ayt_ea_puan': 'REAL DEFAULT 0',
+        'ayt_soz_puan': 'REAL DEFAULT 0'
+    }
+    for field, field_type in ayt_fields.items():
+        if field not in os_cols:
+            cursor.execute(f"ALTER TABLE ogrenci_sonuclari ADD COLUMN {field} {field_type}")
     
     # Öğrenci Eksikleri Tablosu
     cursor.execute('''
@@ -121,9 +168,15 @@ def init_db():
         ogrenci_adi_norm TEXT PRIMARY KEY,
         hedef_bolum TEXT,
         hedef_net REAL,
-        hedef_puan REAL
+        hedef_puan REAL,
+        alan_tercihi TEXT DEFAULT 'SAY'
     )''')
     
+    cursor.execute("PRAGMA table_info(ogrenci_hedefleri)")
+    h_cols = [c[1] for c in cursor.fetchall()]
+    if 'alan_tercihi' not in h_cols:
+        cursor.execute("ALTER TABLE ogrenci_hedefleri ADD COLUMN alan_tercihi TEXT DEFAULT 'SAY'")
+
     # Öğretmen Notları Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogretmen_notlari (
@@ -141,7 +194,7 @@ def init_db():
         logo_base64 TEXT
     )''')
     
-    # Varsayılan Yöneticileri Ekle / Güncelle
+    # Varsayılan Yöneticiler
     cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (1, 'admin', 'admin123', 'admin')")
     cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (2, 'ogretmen', 'ogretmen123', 'ogretmen')")
     
@@ -161,32 +214,32 @@ def normalize_name(text):
     return ' '.join(text.split())
 
 def detect_subject_from_topic(topic_str):
-    """Konu başlığındaki anahtar kelimelerden ders adını tahmin eder."""
+    """Konu başlığındaki anahtar kelimelerden ders adını akıllıca tahmin eder (TYT & AYT)."""
     t = topic_str.lower()
     
-    # Türkçe / Edebiyat
-    if any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'ses bilgisi', 'fiil', 'isim', 'sifat', 'zarf', 'edat', 'anlatim', 'metin', 'edebiyat', 'turkce', 'şiir', 'roman']):
-        return "Türkçe"
-    # Matematik / Geometri
-    elif any(k in t for k in ['üslü', 'köklü', 'fonksiyon', 'polinom', 'çarpanlar', 'denklem', 'eşitsizlik', 'trigonometri', 'türev', 'integral', 'limit', 'logaritma', 'oranti', 'yüzde', 'problem', 'küme', 'sayı', 'olasilik', 'permütasyon', 'kombinasyon', 'üçgen', 'dörtgen', 'çember', 'daire', 'analitik', 'geometri', 'matematik']):
+    # AYT / TYT Matematik - Geometri
+    if any(k in t for k in ['trigonometri', 'türev', 'integral', 'limit', 'logaritma', 'polinom', 'karmaşık', 'diziler', 'parabol', 'üslü', 'köklü', 'fonksiyon', 'çarpanlar', 'denklem', 'eşitsizlik', 'oranti', 'yüzde', 'problem', 'küme', 'sayı', 'olasilik', 'permütasyon', 'kombinasyon', 'üçgen', 'dörtgen', 'çember', 'daire', 'analitik', 'geometri', 'matematik']):
         return "Matematik"
     # Fizik
-    elif any(k in t for k in ['kuvvet', 'hareket', 'vektör', 'dinamik', 'iş', 'güç', 'enerji', 'atış', 'tork', 'denge', 'elektrik', 'manyetizma', 'dalga', 'optik', 'ayna', 'mercek', 'ısı', 'sıcaklık', 'basınç', 'kaldırma', 'fizik', 'atom']):
+    elif any(k in t for k in ['kuvvet', 'hareket', 'vektör', 'dinamik', 'iş', 'güç', 'enerji', 'atış', 'tork', 'denge', 'elektrik', 'manyetizma', 'dalga', 'optik', 'ayna', 'mercek', 'ısı', 'sıcaklık', 'basınç', 'kaldırma', 'fizik', 'atom', 'fotoelektrik', 'modern fizik']):
         return "Fizik"
     # Kimya
-    elif any(k in t for k in ['mol', 'çözelti', 'gaz', 'tepkim', 'asit', 'baz', 'tuz', 'kimya', 'periyodik', 'bağ', 'organik', 'karbon', 'elektrokimya', 'termodinamik', 'hibritleşme']):
+    elif any(k in t for k in ['mol', 'çözelti', 'gaz', 'tepkim', 'asit', 'baz', 'tuz', 'kimya', 'periyodik', 'bağ', 'organik', 'karbon', 'elektrokimya', 'termodinamik', 'hibritleşme', 'denge']):
         return "Kimya"
     # Biyoloji
-    elif any(k in t for k in ['hücre', 'mitoz', 'mayoz', 'kalıtım', 'dna', 'rna', 'sistem', 'solunum', 'dolaşım', 'sindirim', 'boşaltım', 'sinir', 'hormon', 'ekoloji', 'biyoloji', 'canlı', 'bitki']):
+    elif any(k in t for k in ['hücre', 'mitoz', 'mayoz', 'kalıtım', 'dna', 'rna', 'sistem', 'solunum', 'dolaşım', 'sindirim', 'boşaltım', 'sinir', 'hormon', 'ekoloji', 'biyoloji', 'canlı', 'bitki', 'photosentez', 'kemosentez']):
         return "Biyoloji"
+    # Türkçe / Edebiyat
+    elif any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'ses bilgisi', 'fiil', 'isim', 'sifat', 'zarf', 'edat', 'anlatim', 'metin', 'edebiyat', 'turkce', 'şiir', 'roman', 'divan', 'tanzimat', 'servet-i fünun', 'cumhuriyet']):
+        return "Edebiyat / Türkçe"
     # Tarih
-    elif any(k in t for k in ['tarih', 'osmanlı', 'inkılap', 'savaş', 'devlet', 'ilk çağ', 'orta çağ', 'ilke', 'milli mücadele', 'antlaşma']):
+    elif any(k in t for k in ['tarih', 'osmanlı', 'inkılap', 'savaş', 'devlet', 'ilk çağ', 'orta çağ', 'ilke', 'milli mücadele', 'antlaşma', 'beylik']):
         return "Tarih"
     # Coğrafya
-    elif any(k in t for k in ['harita', 'iklim', 'nüfus', 'yer şekilleri', 'coğrafya', 'dünya', 'kıta', 'rüzgar', 'kayaç', 'afet']):
+    elif any(k in t for k in ['harita', 'iklim', 'nüfus', 'yer şekilleri', 'coğrafya', 'dünya', 'kıta', 'rüzgar', 'kayaç', 'afet', 'biyoçeşitlilik', 'ekosistem']):
         return "Coğrafya"
     # Felsefe & Din
-    elif any(k in t for k in ['felsefe', 'bilgi', 'ahlak', 'din', 'inanç', 'ibadet', 'peygamber', 'mantık']):
+    elif any(k in t for k in ['felsefe', 'bilgi', 'ahlak', 'din', 'inanç', 'ibadet', 'peygamber', 'mantık', 'psikoloji', 'sosyoloji']):
         return "Felsefe / Din"
     
     return "Genel / Diğer"
@@ -204,11 +257,11 @@ def get_kurum_bilgileri():
 def get_ogrenci_hedef(norm_adi):
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT hedef_bolum, hedef_net, hedef_puan FROM ogrenci_hedefleri WHERE ogrenci_adi_norm = ?", (norm_adi,))
+    cursor.execute("SELECT hedef_bolum, hedef_net, hedef_puan, alan_tercihi FROM ogrenci_hedefleri WHERE ogrenci_adi_norm = ?", (norm_adi,))
     res = cursor.fetchone()
     conn.close()
     if res:
-        return {'bolum': res[0], 'net': res[1], 'puan': res[2]}
+        return {'bolum': res[0], 'net': res[1], 'puan': res[2], 'alan': res[3] or 'SAY'}
     return None
 
 def render_student_report(norm_adi, ogr_adi, allow_notes=False):
@@ -219,11 +272,17 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     # Hedef Göstergesi
     hedef = get_ogrenci_hedef(norm_adi)
     if hedef:
-        st.info(f"🎯 **Hedef Bölüm:** {hedef['bolum']} | **Hedef Net:** {hedef['net']} | **Hedef Puan:** {hedef['puan']}")
+        st.info(f"🎯 **Hedef Bölüm:** {hedef['bolum']} | **Alan:** {hedef.get('alan', 'SAY')} | **Hedef Net:** {hedef['net']} | **Hedef Puan:** {hedef['puan']}")
     
     # Sınav Sonuçları
     df_sonuc = pd.read_sql_query('''
-        SELECT s.sinav_id, s.sinav_adi, s.tarih, os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net, os.tyt_puan, os.kurum_sirasi
+        SELECT s.sinav_id, s.sinav_adi, s.tarih, s.sinav_turu, s.yayin_evi,
+               os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net as tyt_toplam_net, os.tyt_puan,
+               os.ayt_mat_net, os.ayt_fizik_net, os.ayt_kimya_net, os.ayt_biyo_net, 
+               os.ayt_edebiyat_net, os.ayt_tarih1_net, os.ayt_cogr1_net,
+               os.ayt_tarih2_net, os.ayt_cogr2_net, os.ayt_felsefe_net, os.ayt_din_net,
+               os.ayt_toplam_net, os.ayt_say_puan, os.ayt_ea_puan, os.ayt_soz_puan,
+               os.kurum_sirasi
         FROM ogrenci_sonuclari os
         JOIN sinavlar s ON os.sinav_id = s.sinav_id
         WHERE os.ogrenci_adi_norm = ?
@@ -231,11 +290,21 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     ''', conn, params=(norm_adi,))
     
     if not df_sonuc.empty:
-        st.subheader("📈 Sınav Net Gelişimi")
+        st.subheader("📈 Sınav Net Gelişimi (TYT & AYT)")
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(df_sonuc['sinav_adi'], df_sonuc['toplam_net'], marker='o', color='#3182ce', linewidth=2, label='Toplam Net')
+        
+        # TYT & AYT Eğrileri
+        tyt_data = df_sonuc[df_sonuc['tyt_toplam_net'] > 0]
+        ayt_data = df_sonuc[df_sonuc['ayt_toplam_net'] > 0]
+        
+        if not tyt_data.empty:
+            ax.plot(tyt_data['sinav_adi'], tyt_data['tyt_toplam_net'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
+        if not ayt_data.empty:
+            ax.plot(ayt_data['sinav_adi'], ayt_data['ayt_toplam_net'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
+            
         if hedef and hedef['net']:
-            ax.axhline(y=hedef['net'], color='r', linestyle='--', label=f"Hedef Net ({hedef['net']})")
+            ax.axhline(y=hedef['net'], color='g', linestyle='--', label=f"Hedef Net ({hedef['net']})")
+            
         ax.set_ylabel("Net")
         plt.xticks(rotation=45, ha='right')
         ax.grid(True, linestyle='--', alpha=0.6)
@@ -397,10 +466,7 @@ if st.session_state['role'] in ['admin', 'ogretmen']:
         "📊 Öğrenci Karneleri & Analiz",
         "📚 Ödev & Soru Bankası Takibi",
         "📱 Veli Bilgilendirme & WhatsApp/SMS",
-        "🎯 Hedef Belirleme & Takip",
-        "🏫 Okul Genel Durumu & Dereceler",
-        "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım",
-        "🔥 Okul Konu/Kazanım Analizi"
+        "🎯 Hedef Belirleme & Takip"
     ]
     if st.session_state['role'] == 'admin':
         menu_options.extend([
@@ -424,13 +490,14 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
     st.title("📥 Sınav Sonuçları ve Analiz PDF Yükleme")
     
     st.markdown("""
-    Bu alandan **Excel/CSV** formatındaki sınav sonuç listesini ve öğrencilerin **Eksik Analiz PDF** dosyalarını sisteme aktarabilirsiniz.
+    Bu alandan **Excel/CSV** formatındaki TYT veya AYT sınav sonuç listesini ve öğrencilerin **Eksik Analiz PDF** dosyalarını sisteme aktarabilirsiniz.
     """)
     
-    c1, c2, c3 = st.columns(3)
-    sinav_adi = c1.text_input("Sınav Adı:", placeholder="Örn: Özdebir TYT Deneme-1")
-    yayin_evi = c2.text_input("Yayın Evi:", placeholder="Örn: Özdebir")
-    sinav_tarihi = c3.date_input("Sınav Tarihi")
+    c1, c2, c3, c4 = st.columns(4)
+    sinav_adi = c1.text_input("Sınav Adı:", placeholder="Örn: 345 AYT Deneme-1")
+    yayin_evi = c2.text_input("Yayın Evi:", placeholder="Örn: 345 Yayınları")
+    sinav_turu = c3.selectbox("Sınav Türü:", ["TYT", "AYT", "TYT+AYT"])
+    sinav_tarihi = c4.date_input("Sınav Tarihi")
     
     excel_file = st.file_uploader("📊 Sınav Sonuç Excel / CSV Dosyası Yükleyin:", type=["xlsx", "xls", "csv"])
     pdf_files = st.file_uploader("📑 Öğrenci Eksik Analiz PDF Dosyalarını Yükleyin (Çoklu Seçilebilir):", type=["pdf"], accept_multiple_files=True)
@@ -441,7 +508,7 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                 conn = sqlite3.connect("sinav_takip.db")
                 cursor = conn.cursor()
                 
-                cursor.execute("INSERT INTO sinavlar (sinav_adi, tarih, yayin_evi) VALUES (?, ?, ?)", (sinav_adi, str(sinav_tarihi), yayin_evi))
+                cursor.execute("INSERT INTO sinavlar (sinav_adi, tarih, yayin_evi, sinav_turu) VALUES (?, ?, ?, ?)", (sinav_adi, str(sinav_tarihi), yayin_evi, sinav_turu))
                 sinav_id = cursor.lastrowid
                 
                 if excel_file.name.endswith('.csv'):
@@ -460,20 +527,38 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                         cursor.execute('''
                         INSERT INTO ogrenci_sonuclari (
                             sinav_id, ogrenci_adi, ogrenci_adi_norm, sinif, kurum_sirasi,
-                            turkce_d, turkce_y, turkce_net,
-                            sosyal_d, sosyal_y, sosyal_net,
-                            matematik_d, matematik_y, matematik_net,
-                            fen_d, fen_y, fen_net,
-                            toplam_net, tyt_puan
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            turkce_net, sosyal_net, matematik_net, fen_net, toplam_net, tyt_puan,
+                            ayt_mat_net, ayt_fizik_net, ayt_kimya_net, ayt_biyo_net,
+                            ayt_edebiyat_net, ayt_tarih1_net, ayt_cogr1_net,
+                            ayt_tarih2_net, ayt_cogr2_net, ayt_felsefe_net, ayt_din_net,
+                            ayt_toplam_net, ayt_say_puan, ayt_ea_puan, ayt_soz_puan
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             sinav_id, ogr_adi, ogr_norm, sinif,
                             row.get('kurum sira', row.get('sira', 0)),
-                            row.get('turkce d', 0), row.get('turkce y', 0), row.get('turkce net', 0),
-                            row.get('sosyal d', 0), row.get('sosyal y', 0), row.get('sosyal net', 0),
-                            row.get('matematik d', 0), row.get('matematik y', 0), row.get('matematik net', 0),
-                            row.get('fen d', 0), row.get('fen y', 0), row.get('fen net', 0),
-                            row.get('toplam net', 0), row.get('tyt puan', 0)
+                            # TYT
+                            row.get('turkce net', row.get('turkce_net', 0)),
+                            row.get('sosyal net', row.get('sosyal_net', 0)),
+                            row.get('matematik net', row.get('mat_net', 0)),
+                            row.get('fen net', row.get('fen_net', 0)),
+                            row.get('toplam net', row.get('tyt_toplam_net', 0)),
+                            row.get('tyt puan', row.get('tyt_puan', 0)),
+                            # AYT
+                            row.get('ayt mat net', row.get('ayt_matematik_net', 0)),
+                            row.get('ayt fizik net', row.get('ayt_fizik_net', 0)),
+                            row.get('ayt kimya net', row.get('ayt_kimya_net', 0)),
+                            row.get('ayt biyo net', row.get('ayt_biyoloji_net', 0)),
+                            row.get('ayt edebiyat net', row.get('ayt_edebiyat_net', 0)),
+                            row.get('ayt tarih1 net', row.get('ayt_tarih1_net', 0)),
+                            row.get('ayt cogr1 net', row.get('ayt_cogr1_net', 0)),
+                            row.get('ayt tarih2 net', row.get('ayt_tarih2_net', 0)),
+                            row.get('ayt cogr2 net', row.get('ayt_cogr2_net', 0)),
+                            row.get('ayt felsefe net', row.get('ayt_felsefe_net', 0)),
+                            row.get('ayt din net', row.get('ayt_din_net', 0)),
+                            row.get('ayt toplam net', row.get('ayt_toplam_net', 0)),
+                            row.get('ayt say puan', row.get('say_puan', 0)),
+                            row.get('ayt ea puan', row.get('ea_puan', 0)),
+                            row.get('ayt soz puan', row.get('soz_puan', 0))
                         ))
                 
                 # PDF Analizlerini İşleme (Akıllı Ders Tespiti İle)
@@ -508,7 +593,7 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
 
                 conn.commit()
                 conn.close()
-                st.success(f"✅ '{sinav_adi}' sınav verileri başarıyla veritabanına aktarıldı!")
+                st.success(f"✅ '{sinav_adi}' ({sinav_turu}) sınav verileri başarıyla veritabanına aktarıldı!")
             except Exception as e:
                 st.error(f"Sınav aktarılırken bir hata oluştu: {str(e)}")
         else:
@@ -548,10 +633,10 @@ elif secim in ["📚 Ödev & Soru Bankası Takibi", "📚 Ödevlerim & Ödev Dur
             st.subheader("Yeni Ödev Tanımlama")
             c1, c2, c3 = st.columns(3)
             sinif_secim = c1.selectbox("Sınıf / Grup:", ["Tüm Sınıflar", "12-A", "12-B", "12-C", "11-A", "Mezun"])
-            ders_secim = c2.selectbox("Ders:", ["Matematik", "Fizik", "Kimya", "Biyoloji", "Türkçe", "Tarih", "Coğrafya", "Felsefe"])
+            ders_secim = c2.selectbox("Ders:", ["Matematik", "Fizik", "Kimya", "Biyoloji", "Edebiyat", "Tarih", "Coğrafya", "Felsefe"])
             son_tarih = c3.date_input("Son Teslim Tarihi")
             
-            konu_kaynak = st.text_input("Ödev Konusu / Kaynak ve Sayfa Aralığı:", placeholder="Örn: 345 Matematik SB - Türev Test 1-5 (Sayfa 120-130)")
+            konu_kaynak = st.text_input("Ödev Konusu / Kaynak ve Sayfa Aralığı:", placeholder="Örn: 345 AYT Matematik SB - Türev Test 1-5")
             
             if st.button("🚀 Ödevi Yayınla", type="primary"):
                 if konu_kaynak.strip():
@@ -662,7 +747,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS":
                 whatsapp_url = f"https://wa.me/{tel_no}?text={encoded_msg}"
                 st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color:#25D366; color:white; border:none; padding:12px 24px; font-size:16px; border-radius:8px; cursor:pointer; font-weight:bold;">💬 WhatsApp ile Gönder ({tel_no})</button></a>', unsafe_allow_html=True)
     else:
-        st.warning("Telefon numarası kayıtlı veli/öğrenci bulunamadı. 'Öğrenci & Veli Hesap Yönetimi' menüsünden telefon numarası ekleyebilirsiniz.")
+        st.warning("Telefon numarası kayıtlı veli/öğrenci bulunamadı.")
     conn.close()
 
 # --- 5. MENÜ: HEDEF BELİRLEME & TAKİP ---
@@ -678,191 +763,105 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
             
             hedef_mevcut = get_ogrenci_hedef(secilen_norm)
             
-            with st.form("hedef_form"):
-                hedef_bolum = st.text_input("Hedeflenen Üniversite & Bölüm:", value=hedef_mevcut['bolum'] if hedef_mevcut else "")
-                hedef_net = st.number_input("Hedeflenen TYT Toplam Net:", min_value=0.0, max_value=120.0, value=float(hedef_mevcut['net']) if hedef_mevcut else 75.0)
-                hedef_puan = st.number_input("Hedeflenen TYT Puanı:", min_value=0.0, max_value=500.0, value=float(hedef_mevcut['puan']) if hedef_mevcut else 350.0)
-                
-                if st.form_submit_button("🎯 Hedefi Kaydet / Güncelle"):
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO ogrenci_hedefleri (ogrenci_adi_norm, hedef_bolum, hedef_net, hedef_puan)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(ogrenci_adi_norm) DO UPDATE SET
-                        hedef_bolum=excluded.hedef_bolum,
-                        hedef_net=excluded.hedef_net,
-                        hedef_puan=excluded.hedef_puan
-                    ''', (secilen_norm, hedef_bolum, hedef_net, hedef_puan))
-                    conn.commit()
-                    st.success("Hedef başarıyla kaydedildi!")
+            c1, c2, c3, c4 = st.columns(4)
+            hedef_bolum = c1.text_input("Hedef Üniversite / Bölüm:", value=hedef_mevcut['bolum'] if hedef_mevcut else "")
+            alan_tercihi = c2.selectbox("Alan:", ["SAY", "EA", "SÖZ", "DİL"], index=0 if not hedef_mevcut else ["SAY", "EA", "SÖZ", "DİL"].index(hedef_mevcut.get('alan', 'SAY')))
+            hedef_net = c3.number_input("Hedef Toplam Net:", value=float(hedef_mevcut['net']) if hedef_mevcut and hedef_mevcut['net'] else 0.0)
+            hedef_puan = c4.number_input("Hedef Puan:", value=float(hedef_mevcut['puan']) if hedef_mevcut and hedef_mevcut['puan'] else 0.0)
+            
+            if st.button("💾 Hedefi Kaydet / Güncelle"):
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO ogrenci_hedefleri (ogrenci_adi_norm, hedef_bolum, hedef_net, hedef_puan, alan_tercihi)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (secilen_norm, hedef_bolum, hedef_net, hedef_puan, alan_tercihi))
+                conn.commit()
+                st.success("Öğrenci hedefi kaydedildi!")
     else:
         norm_adi = st.session_state['user_info']['norm_adi']
-        hedef = get_ogrenci_hedef(norm_adi)
-        if hedef:
-            st.success(f"🎯 **Hedef Bölümünüz:** {hedef['bolum']}")
-            c1, c2 = st.columns(2)
-            c1.metric("Hedef Net", f"{hedef['net']} Net")
-            c2.metric("Hedef Puan", f"{hedef['puan']} Puan")
+        hedef_mevcut = get_ogrenci_hedef(norm_adi)
+        if hedef_mevcut:
+            st.success(f"🎯 **Hedefiniz:** {hedef_mevcut['bolum']} ({hedef_mevcut.get('alan', 'SAY')})")
+            st.metric("Hedeflenen Net", hedef_mevcut['net'])
+            st.metric("Hedeflenen Puan", hedef_mevcut['puan'])
         else:
-            st.info("Henüz tanımlanmış bir hedefiniz bulunmuyor. Rehberlik öğretmeninizle iletişime geçebilirsiniz.")
+            st.info("Henüz bir hedef tanımlanmamış. Danışman öğretmeninizle görüşebilirsiniz.")
     conn.close()
 
-# --- 6. MENÜ: OKUL GENEL DURUMU & DERECELER ---
-elif secim == "🏫 Okul Genel Durumu & Dereceler":
-    st.title("🏫 Okul Genel Başarı Durumu & Dereceler")
-    conn = sqlite3.connect("sinav_takip.db")
-    
-    df_sinavlar = pd.read_sql_query("SELECT * FROM sinavlar ORDER BY sinav_id DESC", conn)
-    if not df_sinavlar.empty:
-        secilen_sinav_id = st.selectbox("Sınav Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0])
-        
-        df_derece = pd.read_sql_query('''
-            SELECT kurum_sirasi as 'Sıra', ogrenci_adi as 'Öğrenci Adı', sinif as 'Sınıf', turkce_net as 'Türkçe', sosyal_net as 'Sosyal', matematik_net as 'Matematik', fen_net as 'Fen', toplam_net as 'Toplam Net', tyt_puan as 'TYT Puanı'
-            FROM ogrenci_sonuclari
-            WHERE sinav_id = ?
-            ORDER BY kurum_sirasi ASC
-        ''', conn, params=(secilen_sinav_id,))
-        
-        st.subheader("🏆 Sınav Derece Listesi (Dereceye Giren İlk 10 Öğrenci)")
-        st.dataframe(df_derece.head(10), use_container_width=True)
-        
-        st.subheader("📊 Tüm Öğrenci Sıralaması")
-        st.dataframe(df_derece, use_container_width=True)
-    else:
-        st.info("Kayıtlı sınav bulunamadı.")
-    conn.close()
-
-# --- 7. MENÜ: SINIF KARŞILAŞTIRMALI RADAR & DAĞILIM ---
-elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım":
-    st.title("🕸️ Sınıf Bazlı Ders Ortalamaları ve Karşılaştırma")
-    conn = sqlite3.connect("sinav_takip.db")
-    
-    df_sinif_ort = pd.read_sql_query('''
-        SELECT sinif, AVG(turkce_net) as Türkçe, AVG(sosyal_net) as Sosyal, AVG(matematik_net) as Matematik, AVG(fen_net) as Fen, AVG(toplam_net) as Toplam
-        FROM ogrenci_sonuclari
-        GROUP BY sinif
-    ''', conn)
-    
-    if not df_sinif_ort.empty:
-        st.subheader("📊 Sınıf Ders Ortalamaları Tablosu")
-        st.dataframe(df_sinif_ort.style.highlight_max(axis=0, color='#c6f6d5'), use_container_width=True)
-        
-        st.subheader("📈 Sınıf Toplam Net Ortalamaları")
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.bar(df_sinif_ort['sinif'], df_sinif_ort['Toplam'], color='#3182ce')
-        ax.set_ylabel("Ortalama Toplam Net")
-        ax.grid(axis='y', linestyle='--', alpha=0.7)
-        st.pyplot(fig)
-    else:
-        st.info("Analiz için yeterli veri bulunmamaktadır.")
-    conn.close()
-
-# --- 8. MENÜ: OKUL KONU/KAZANIM ANALİZİ ---
-elif secim == "🔥 Okul Konu/Kazanım Analizi":
-    st.title("🔥 Okul Genel Konu ve Kazanım Analizi")
-    conn = sqlite3.connect("sinav_takip.db")
-    
-    df_eksikler = pd.read_sql_query('''
-        SELECT konu_kazanim, COUNT(*) as 'Yanlış Yapılma Sayısı'
-        FROM ogrenci_eksikleri
-        GROUP BY konu_kazanim
-        ORDER BY [Yanlış Yapılma Sayısı] DESC
-        LIMIT 15
-    ''', conn)
-    
-    if not df_eksikler.empty:
-        st.subheader("⚠️ Okul Genelinde En Çok Yanlış Yapılan İlk 15 Konu")
-        st.dataframe(df_eksikler, use_container_width=True)
-        
-        fig, ax = plt.subplots(figsize=(9, 4.5))
-        ax.barh(df_eksikler['konu_kazanim'], df_eksikler['Yanlış Yapılma Sayısı'], color='#e53e3e')
-        ax.invert_yaxis()
-        ax.set_xlabel("Toplam Hata/Yanlış Frekansı")
-        ax.grid(axis='x', linestyle='--', alpha=0.7)
-        st.pyplot(fig)
-    else:
-        st.info("Kazanım eksik verisi bulunamadı.")
-    conn.close()
-
-# --- 9. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ ---
+# --- ADMIN ÖZEL MENÜLERİ ---
 elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
-    st.title("👥 Öğrenci ve Veli Kullanıcı Hesap Yönetimi")
+    st.title("👥 Kullanıcı & Veli Hesabı Yönetimi")
     conn = sqlite3.connect("sinav_takip.db")
     
-    tab_yeni, tab_liste = st.tabs(["➕ Yeni Kullanıcı Tanımla", "📋 Kullanıcı Listesi"])
-    
-    with tab_yeni:
-        with st.form("kullanici_ekle_form"):
-            c1, c2 = st.columns(2)
-            k_adi = c1.text_input("Kullanıcı Adı:")
-            sifre = c2.text_input("Şifre:", type="password")
+    with st.form("yeni_kullanici"):
+        st.subheader("➕ Yeni Kullanıcı / Veli Ekle")
+        c1, c2, c3, c4 = st.columns(4)
+        k_adi = c1.text_input("Kullanıcı Adı:")
+        sifre = c2.text_input("Şifre:")
+        rol = c3.selectbox("Rol:", ["ogrenci", "ogretmen", "admin"])
+        tel = c4.text_input("Telefon (WhatsApp):", placeholder="905xxxxxxxxx")
+        
+        df_ogr = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm, ogrenci_adi FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC", conn)
+        ogr_dict = {"": "Atama Yapma"}
+        if not df_ogr.empty:
+            ogr_dict.update(dict(zip(df_ogr['ogrenci_adi_norm'], df_ogr['ogrenci_adi'])))
             
-            c3, c4 = st.columns(2)
-            rol = c3.selectbox("Rol:", ["ogrenci", "veli", "ogretmen", "admin"])
-            telefon = c4.text_input("Telefon No (WhatsApp için - Örn: 905xxxxxxxxx):")
-            
-            df_ogrs = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm, ogrenci_adi FROM ogrenci_sonuclari", conn)
-            ogr_norm = None
-            if not df_ogrs.empty and rol in ['ogrenci', 'veli']:
-                ogr_dict = dict(zip(df_ogrs['ogrenci_adi_norm'], df_ogrs['ogrenci_adi']))
-                ogr_norm = st.selectbox("İlişkilendirilecek Öğrenci:", list(ogr_dict.keys()), format_func=lambda x: ogr_dict[x])
+        bagli_ogr = st.selectbox("Eşleşecek Öğrenci (Öğrenci/Veli Hesabı İçin):", list(ogr_dict.keys()), format_func=lambda x: ogr_dict[x])
+        
+        if st.form_submit_button("Hesabı Oluştur"):
+            if k_adi and sifre:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, ?, ?, ?, ?)", 
+                                   (k_adi.strip(), sifre.strip(), rol, bagli_ogr if bagli_ogr else None, tel.strip()))
+                    conn.commit()
+                    st.success("Kullanıcı eklendi!")
+                except sqlite3.IntegrityError:
+                    st.error("Bu kullanıcı adı zaten mevcut!")
+            else:
+                st.warning("Lütfen kullanıcı adı ve şifre girin.")
                 
-            if st.form_submit_button("➕ Kullanıcıyı Oluştur"):
-                if k_adi and sifre:
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, ?, ?, ?, ?)", (k_adi.strip(), sifre.strip(), rol, ogr_norm, telefon.strip()))
-                        conn.commit()
-                        st.success("Kullanıcı başarıyla oluşturuldu!")
-                    except Exception as e:
-                        st.error(f"Kullanıcı eklenirken hata oluştu: {str(e)}")
-                        
-    with tab_liste:
-        df_users = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm, telefon FROM kullanicilar", conn)
-        st.dataframe(df_users, use_container_width=True)
+    st.subheader("📋 Kayıtlı Kullanıcılar")
+    df_users = pd.read_sql_query("SELECT id, kullanici_adi, rol, ogrenci_adi_norm, telefon FROM kullanicilar", conn)
+    st.dataframe(df_users, use_container_width=True)
     conn.close()
 
-# --- 10. MENÜ: KURUM AYARLARI & LOGO ---
 elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
-    st.title("⚙️ Kurum Ayarları ve Logo Yükleme")
+    st.title("⚙️ Kurum Ayarları & Logo")
     conn = sqlite3.connect("sinav_takip.db")
     
-    kurum_adi, logo_b64 = get_kurum_bilgileri()
+    m_adi, m_logo = get_kurum_bilgileri()
     
-    yeni_kurum_adi = st.text_input("Kurum Adı:", value=kurum_adi)
-    uploaded_logo = st.file_uploader("Kurum Logosu (PNG/JPG):", type=["png", "jpg", "jpeg"])
+    k_adi_input = st.text_input("Kurum Adı:", value=m_adi)
+    logo_file = st.file_uploader("Kurum Logosu Yükle (PNG/JPG):", type=["png", "jpg", "jpeg"])
     
-    if st.button("💾 Ayarları Kaydet"):
-        cursor = conn.cursor()
-        b64_str = logo_b64
-        if uploaded_logo:
-            b64_str = base64.b64encode(uploaded_logo.read()).decode('utf-8')
+    if st.button("Ayarları Kaydet"):
+        logo_b64 = m_logo
+        if logo_file:
+            logo_b64 = base64.b64encode(logo_file.read()).decode('utf-8')
             
-        cursor.execute("DELETE FROM kurum_ayarlari")
-        cursor.execute("INSERT INTO kurum_ayarlari (id, kurum_adi, logo_base64) VALUES (1, ?, ?)", (yeni_kurum_adi, b64_str))
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO kurum_ayarlari (id, kurum_adi, logo_base64) VALUES (1, ?, ?)", (k_adi_input, logo_b64))
         conn.commit()
-        st.success("Kurum bilgileri başarıyla güncellendi!")
+        st.success("Kurum ayarları kaydedildi!")
+        st.rerun()
     conn.close()
 
-# --- 11. MENÜ: SINAV YÖNETİMİ & SİLME ---
 elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
-    st.title("🗑️ Sınav Yönetimi ve Veri Silme Paneli")
+    st.title("🗑️ Sınav Yönetimi & Silme")
     conn = sqlite3.connect("sinav_takip.db")
     
-    df_sinavlar = pd.read_sql_query("SELECT * FROM sinavlar ORDER BY sinav_id DESC", conn)
+    df_sinavlar = pd.read_sql_query("SELECT sinav_id, sinav_adi, tarih, yayin_evi, sinav_turu FROM sinavlar ORDER BY sinav_id DESC", conn)
     if not df_sinavlar.empty:
         st.dataframe(df_sinavlar, use_container_width=True)
+        silinecek_id = st.selectbox("Silinecek Sınavı Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: f"ID:{x} - {df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0]}")
         
-        silinecek_id = st.selectbox("Silinecek Sınavı Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: f"ID: {x} - {df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0]}")
-        
-        if st.button("🔴 Sınavı ve Tüm Sonuçlarını Kalıcı Olarak Sil", type="primary"):
+        if st.button("🔥 Sınavı ve Tüm Sonuçlarını Sil", type="primary"):
             cursor = conn.cursor()
             cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (silinecek_id,))
-            cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (silinecek_id,))
-            cursor.execute("DELETE FROM ogrenci_eksikleri WHERE sinav_id = ?", (silinecek_id,))
             conn.commit()
-            st.success("Sınav ve bağlı tüm veriler veritabanından başarıyla silindi!")
+            st.success("Sınav ve ilgili verileri tamamen silindi!")
             st.rerun()
     else:
-        st.info("Kayıtlı sınav bulunmamaktadır.")
+        st.info("Kayıtlı sınav bulunmuyor.")
     conn.close()
