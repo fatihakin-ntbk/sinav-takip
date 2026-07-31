@@ -263,24 +263,41 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     if hedef:
         st.info(f"🎯 **Hedef Bölüm:** {hedef['bolum']} | **Alan:** {hedef.get('alan', 'SAY')} | **Hedef Net:** {hedef['net']} | **Hedef Puan:** {hedef['puan']}")
     
-    # --- YENİ EKLENEN: DİNAMİK SINAV TÜRÜ FİLTRESİ ---
+    # DİNAMİK SINAV TÜRÜ FİLTRESİ
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
+    # SQL Sorgusu Esnekleştirildi (NULL Değerler 0'a çekiliyor)
     df_sonuc = pd.read_sql_query('''
-        SELECT s.sinav_id, s.sinav_adi, s.tarih, s.sinav_turu,
-               os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net as tyt_toplam, os.tyt_puan,
-               os.ayt_mat_net, os.ayt_fizik_net, os.ayt_kimya_net, os.ayt_biyo_net, 
-               os.ayt_edebiyat_net, os.ayt_tarih1_net, os.ayt_cogr1_net, os.ayt_toplam_net as ayt_toplam,
-               os.ayt_say_puan, os.ayt_ea_puan, os.kurum_sirasi
+        SELECT s.sinav_id, s.sinav_adi, s.tarih, COALESCE(s.sinav_turu, 'TYT') as sinav_turu,
+               COALESCE(os.turkce_net, 0) as turkce_net, 
+               COALESCE(os.sosyal_net, 0) as sosyal_net, 
+               COALESCE(os.matematik_net, 0) as matematik_net, 
+               COALESCE(os.fen_net, 0) as fen_net, 
+               COALESCE(os.toplam_net, 0) as tyt_toplam, 
+               COALESCE(os.tyt_puan, 0) as tyt_puan,
+               COALESCE(os.ayt_mat_net, 0) as ayt_mat_net, 
+               COALESCE(os.ayt_fizik_net, 0) as ayt_fizik_net, 
+               COALESCE(os.ayt_kimya_net, 0) as ayt_kimya_net, 
+               COALESCE(os.ayt_biyo_net, 0) as ayt_biyo_net, 
+               COALESCE(os.ayt_edebiyat_net, 0) as ayt_edebiyat_net, 
+               COALESCE(os.ayt_tarih1_net, 0) as ayt_tarih1_net, 
+               COALESCE(os.ayt_cogr1_net, 0) as ayt_cogr1_net, 
+               COALESCE(os.ayt_toplam_net, 0) as ayt_toplam,
+               COALESCE(os.ayt_say_puan, 0) as ayt_say_puan, 
+               COALESCE(os.ayt_ea_puan, 0) as ayt_ea_puan, 
+               os.kurum_sirasi
         FROM ogrenci_sonuclari os
         JOIN sinavlar s ON os.sinav_id = s.sinav_id
         WHERE os.ogrenci_adi_norm = ?
         ORDER BY s.tarih ASC, s.sinav_id ASC
     ''', conn, params=(norm_adi,))
     
-    # Seçilen türe göre veriyi filtrele
+    # Filtreleme Mantığı Esnetildi (Hem sinav_turu hem sinav_adi taranır)
     if view_type != "Tümü":
-        df_filtered = df_sonuc[df_sonuc['sinav_turu'] == view_type]
+        df_filtered = df_sonuc[
+            (df_sonuc['sinav_turu'].str.upper() == view_type) | 
+            (df_sonuc['sinav_adi'].str.contains(view_type, case=False, na=False))
+        ]
     else:
         df_filtered = df_sonuc.copy()
 
@@ -288,8 +305,8 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.subheader(f"📈 Sınav Net Gelişimi ({view_type})")
         fig, ax = plt.subplots(figsize=(10, 4))
         
-        df_tyt = df_filtered[df_filtered['sinav_turu'] == 'TYT']
-        df_ayt = df_filtered[df_filtered['sinav_turu'] == 'AYT']
+        df_tyt = df_filtered[(df_filtered['sinav_turu'] == 'TYT') | (df_filtered['sinav_adi'].str.contains('TYT', case=False, na=False))]
+        df_ayt = df_filtered[(df_filtered['sinav_turu'] == 'AYT') | (df_filtered['sinav_adi'].str.contains('AYT', case=False, na=False))]
         
         if view_type in ["Tümü", "TYT"] and not df_tyt.empty:
             ax.plot(df_tyt['sinav_adi'], df_tyt['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
@@ -307,7 +324,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         
         st.subheader("📊 Sınav Detay Tablosu")
         
-        # Seçilen türe göre sütunları düzenleme (Karmaşayı önleme)
+        # Sütunları filtreleme türüne göre dinamik gizleme/gösterme
         cols_to_show = ['sinav_adi', 'tarih', 'sinav_turu']
         if view_type == "TYT":
             cols_to_show += ['turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'tyt_toplam', 'tyt_puan', 'kurum_sirasi']
