@@ -1,5 +1,5 @@
 streamlit
 pandas
-pypdf
-matplotlib
+plotly
 openpyxl
+pdfplumber
