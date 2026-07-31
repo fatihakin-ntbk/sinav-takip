@@ -160,6 +160,37 @@ def normalize_name(text):
     text = re.sub(r'[^A-Z0-9\s]', '', text)
     return ' '.join(text.split())
 
+def detect_subject_from_topic(topic_str):
+    """Konu başlığındaki anahtar kelimelerden ders adını tahmin eder."""
+    t = topic_str.lower()
+    
+    # Türkçe / Edebiyat
+    if any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'ses bilgisi', 'fiil', 'isim', 'sifat', 'zarf', 'edat', 'anlatim', 'metin', 'edebiyat', 'turkce', 'şiir', 'roman']):
+        return "Türkçe"
+    # Matematik / Geometri
+    elif any(k in t for k in ['üslü', 'köklü', 'fonksiyon', 'polinom', 'çarpanlar', 'denklem', 'eşitsizlik', 'trigonometri', 'türev', 'integral', 'limit', 'logaritma', 'oranti', 'yüzde', 'problem', 'küme', 'sayı', 'olasilik', 'permütasyon', 'kombinasyon', 'üçgen', 'dörtgen', 'çember', 'daire', 'analitik', 'geometri', 'matematik']):
+        return "Matematik"
+    # Fizik
+    elif any(k in t for k in ['kuvvet', 'hareket', 'vektör', 'dinamik', 'iş', 'güç', 'enerji', 'atış', 'tork', 'denge', 'elektrik', 'manyetizma', 'dalga', 'optik', 'ayna', 'mercek', 'ısı', 'sıcaklık', 'basınç', 'kaldırma', 'fizik', 'atom']):
+        return "Fizik"
+    # Kimya
+    elif any(k in t for k in ['mol', 'çözelti', 'gaz', 'tepkim', 'asit', 'baz', 'tuz', 'kimya', 'periyodik', 'bağ', 'organik', 'karbon', 'elektrokimya', 'termodinamik', 'hibritleşme']):
+        return "Kimya"
+    # Biyoloji
+    elif any(k in t for k in ['hücre', 'mitoz', 'mayoz', 'kalıtım', 'dna', 'rna', 'sistem', 'solunum', 'dolaşım', 'sindirim', 'boşaltım', 'sinir', 'hormon', 'ekoloji', 'biyoloji', 'canlı', 'bitki']):
+        return "Biyoloji"
+    # Tarih
+    elif any(k in t for k in ['tarih', 'osmanlı', 'inkılap', 'savaş', 'devlet', 'ilk çağ', 'orta çağ', 'ilke', 'milli mücadele', 'antlaşma']):
+        return "Tarih"
+    # Coğrafya
+    elif any(k in t for k in ['harita', 'iklim', 'nüfus', 'yer şekilleri', 'coğrafya', 'dünya', 'kıta', 'rüzgar', 'kayaç', 'afet']):
+        return "Coğrafya"
+    # Felsefe & Din
+    elif any(k in t for k in ['felsefe', 'bilgi', 'ahlak', 'din', 'inanç', 'ibadet', 'peygamber', 'mantık']):
+        return "Felsefe / Din"
+    
+    return "Genel / Diğer"
+
 def get_kurum_bilgileri():
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
@@ -218,7 +249,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.markdown("---")
         c_eksik, c_basari = st.columns(2)
         
-        # 1. En Son Sınav ID'sini alalım
+        # Son Sınav ID
         son_sinav_id = df_sonuc['sinav_id'].iloc[-1]
         
         # Öğrencinin TÜM sınavlardaki eksik kaydı
@@ -228,13 +259,20 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             WHERE ogrenci_adi_norm = ?
         ''', conn, params=(norm_adi,))
 
+        # Ders adı "Genel" kalan veriler varsa onları konu adından akıllıca düzeltelim
+        if not df_tum_eksikler.empty:
+            df_tum_eksikler['ders'] = df_tum_eksikler.apply(
+                lambda r: detect_subject_from_topic(r['konu_kazanim']) if r['ders'] in ['Genel', 'Genel / Diğer', ''] else r['ders'],
+                axis=1
+            )
+
         with c_eksik:
             st.subheader("⚠️ Aktif Eksik / Çalışılması Gereken Konular")
             if not df_tum_eksikler.empty:
-                # Son sınavda yanlış yapılanlar güncel eksiklerdir
                 df_son_eksik = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]
                 if not df_son_eksik.empty:
                     df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
+                    df_eksik_ozet.columns = ['Ders', 'Konu / Kazanım', 'Tekrar Sayısı']
                     
                     # 🔴 Kırmızı Arka Plan Stil Uygulaması
                     styled_eksik = df_eksik_ozet.style.set_properties(**{
@@ -252,18 +290,15 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             st.subheader("✅ Başarıyla Halledilen Konular (Gelişim Gösterilen)")
             
             if not df_tum_eksikler.empty:
-                # Geçmiş sınavlarda (son sınav hariç) yanlış yapılan konular
                 gecmis_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] != son_sinav_id]['konu_kazanim'].unique()
-                
-                # Son sınavda yanlış yapılan konular
                 son_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]['konu_kazanim'].unique()
                 
-                # KURAL: Geçmişte yanlış yapılmış AMA son sınavda eksik listesinden çıkmış konular = HALLEDİLEN KONULAR!
                 halledilen_konular = [konu for konu in gecmis_eksikler if konu not in son_eksikler]
                 
                 if halledilen_konular:
                     df_halledilen = df_tum_eksikler[df_tum_eksikler['konu_kazanim'].isin(halledilen_konular)][['ders', 'konu_kazanim']].drop_duplicates()
-                    df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı (Halledildi)'
+                    df_halledilen.columns = ['Ders', 'Konu / Kazanım']
+                    df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı'
                     
                     # 🟢 Yeşil Arka Plan Stil Uygulaması
                     styled_halledilen = df_halledilen.style.set_properties(**{
@@ -273,7 +308,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                     })
                     st.dataframe(styled_halledilen, use_container_width=True)
                 else:
-                    st.info("Geçmiş sınavlarda yanlış yapılıp son sınavda düzeltilen henüz bir konu bulunmuyor. Denemeler arttıkça burası güncellenecektir.")
+                    st.info("Geçmiş sınavlarda yanlış yapılıp son sınavda düzeltilen henüz bir konu bulunmuyor.")
             else:
                 st.info("Henüz karşılaştırma yapılacak yeterli eksik veri analizi yok.")
                 
@@ -356,7 +391,6 @@ if st.sidebar.button("🚪 Çıkış Yap"):
 
 st.sidebar.markdown("---")
 
-# Menü Yetkilendirmesi
 if st.session_state['role'] in ['admin', 'ogretmen']:
     menu_options = [
         "📥 Sınav Yükle & Veri Aktarımı",
@@ -375,7 +409,6 @@ if st.session_state['role'] in ['admin', 'ogretmen']:
             "🗑️ Sınav Yönetimi & Silme"
         ])
 else:
-    # Öğrenci / Veli Menüsü
     menu_options = [
         "🎓 Gelişim & Analiz Karnem",
         "📚 Ödevlerim & Ödev Durumu",
@@ -408,17 +441,14 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                 conn = sqlite3.connect("sinav_takip.db")
                 cursor = conn.cursor()
                 
-                # Sınavı Kaydet
                 cursor.execute("INSERT INTO sinavlar (sinav_adi, tarih, yayin_evi) VALUES (?, ?, ?)", (sinav_adi, str(sinav_tarihi), yayin_evi))
                 sinav_id = cursor.lastrowid
                 
-                # Excel Okuma
                 if excel_file.name.endswith('.csv'):
                     df = pd.read_csv(excel_file)
                 else:
                     df = pd.read_excel(excel_file)
                 
-                # Kolon Normalizasyonu
                 df.columns = [str(c).strip().lower() for c in df.columns]
                 
                 for _, row in df.iterrows():
@@ -446,7 +476,7 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                             row.get('toplam net', 0), row.get('tyt puan', 0)
                         ))
                 
-                # PDF Analizlerini İşleme (Opsiyonel)
+                # PDF Analizlerini İşleme (Akıllı Ders Tespiti İle)
                 if pdf_files:
                     try:
                         import pypdf
@@ -465,10 +495,14 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                                     parts = line.split(":")
                                     konu_temiz = parts[0].strip()
                                     sorular = parts[1].strip() if len(parts) > 1 else ""
+                                    
+                                    # Akıllı Ders Tespiti
+                                    tespit_edilen_ders = detect_subject_from_topic(konu_temiz)
+                                    
                                     cursor.execute('''
                                     INSERT INTO ogrenci_eksikleri (sinav_id, ogrenci_adi, ogrenci_adi_norm, ders, konu_kazanim, soru_nolari)
                                     VALUES (?, ?, ?, ?, ?, ?)
-                                    ''', (sinav_id, pdf_name, pdf_norm_name, "Genel", konu_temiz, sorular))
+                                    ''', (sinav_id, pdf_name, pdf_norm_name, tespit_edilen_ders, konu_temiz, sorular))
                     except ImportError:
                         st.warning("PyPDF kütüphanesi yüklenmediği için PDF okuma işlemi atlandı. (pip install pypdf)")
 
@@ -495,7 +529,6 @@ elif secim in ["📊 Öğrenci Karneleri & Analiz", "🎓 Gelişim & Analiz Karn
         else:
             st.info("Sistemde henüz kayıtlı öğrenci sonucu bulunmamaktadır.")
     else:
-        # Öğrenci / Veli Girişi
         norm_adi = st.session_state['user_info']['norm_adi']
         if norm_adi:
             render_student_report(norm_adi, st.session_state['user_info']['username'], allow_notes=False)
