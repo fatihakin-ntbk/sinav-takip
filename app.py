@@ -80,7 +80,7 @@ def init_db():
         FOREIGN KEY (sinav_id) REFERENCES sinavlar(sinav_id) ON DELETE CASCADE
     )''')
     
-    # Öğrenci Eksikleri Tablosu (PDF / Konu Analizi)
+    # Öğrenci Eksikleri Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_eksikleri (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,7 +192,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     # Sınav Sonuçları
     df_sonuc = pd.read_sql_query('''
-        SELECT s.sinav_adi, s.tarih, os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net, os.tyt_puan, os.kurum_sirasi
+        SELECT s.sinav_id, s.sinav_adi, s.tarih, os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net, os.tyt_puan, os.kurum_sirasi
         FROM ogrenci_sonuclari os
         JOIN sinavlar s ON os.sinav_id = s.sinav_id
         WHERE os.ogrenci_adi_norm = ?
@@ -212,27 +212,63 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.pyplot(fig)
         
         st.subheader("📊 Sınav Detay Tablosu")
-        st.dataframe(df_sonuc, use_container_width=True)
+        st.dataframe(df_sonuc.drop(columns=['sinav_id']), use_container_width=True)
         
-        # Konu / Kazanım Eksikleri
-        st.subheader("⚠️ Konu & Kazanım Eksikleri")
-        df_eksik = pd.read_sql_query('''
-            SELECT ders, konu_kazanim, COUNT(*) as tekrar_sayisi
+        # --- AKILLI DERS & KONU GELİŞİM ANALİZİ ---
+        st.markdown("---")
+        c_eksik, c_basari = st.columns(2)
+        
+        # 1. En Son Sınav ID'sini alalım
+        son_sinav_id = df_sonuc['sinav_id'].iloc[-1]
+        
+        # Öğrencinin TÜM sınavlardaki eksik kaydı
+        df_tum_eksikler = pd.read_sql_query('''
+            SELECT sinav_id, ders, konu_kazanim
             FROM ogrenci_eksikleri
             WHERE ogrenci_adi_norm = ?
-            GROUP BY ders, konu_kazanim
-            ORDER BY tekrar_sayisi DESC
         ''', conn, params=(norm_adi,))
-        
-        if not df_eksik.empty:
-            st.dataframe(df_eksik, use_container_width=True)
-        else:
-            st.success("Tebrikler! Belirlenmiş bir konu eksiğiniz bulunmuyor.")
+
+        with c_eksik:
+            st.subheader("⚠️ Aktif Eksik / Çalışılması Gereken Konular")
+            if not df_tum_eksikler.empty:
+                # Son sınavda yanlış yapılanlar güncel eksiklerdir
+                df_son_eksik = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]
+                if not df_son_eksik.empty:
+                    df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
+                    st.dataframe(df_eksik_ozet, use_container_width=True)
+                else:
+                    st.success("🎉 Harika! Son sınavda tespit edilen yeni bir konu eksiği yok.")
+            else:
+                st.success("Tebrikler! Belirlenmiş bir konu eksiğiniz bulunmuyor.")
+
+        with c_basari:
+            st.subheader("✅ Başarıyla Halledilen Konular (Gelişim Gösterilen)")
+            
+            if not df_tum_eksikler.empty:
+                # Geçmiş sınavlarda (son sınav hariç) yanlış yapılan konular
+                gecmis_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] != son_sinav_id]['konu_kazanim'].unique()
+                
+                # Son sınavda yanlış yapılan konular
+                son_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]['konu_kazanim'].unique()
+                
+                # KURAL: Geçmişte yanlış yapılmış AMA son sınavda eksik listesinden çıkmış konular = HALLEDİLEN KONULAR!
+                halledilen_konular = [konu for konu in gecmis_eksikler if konu not in son_eksikler]
+                
+                if halledilen_konular:
+                    df_halledilen = df_tum_eksikler[df_tum_eksikler['konu_kazanim'].isin(halledilen_konular)][['ders', 'konu_kazanim']].drop_duplicates()
+                    df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı (Halledildi)'
+                    st.dataframe(df_halledilen, use_container_width=True)
+                else:
+                    st.info("Geçmiş sınavlarda yanlış yapılıp son sınavda düzeltilen henüz bir konu bulunmuyor. Denemeler arttıkça burası güncellenecektir.")
+            else:
+                st.info("Henüz karşılaştırma yapılacak yeterli eksik veri analizi yok.")
+                
     else:
         st.warning("Bu öğrenciye ait girilmiş sınav sonucu bulunamadı.")
         
     # Öğretmen Notları Bölümü
     if allow_notes:
+        st.markdown("---")
         st.subheader("📝 Öğretmen Görüş ve Notları")
         with st.form("ogretmen_not_form"):
             yeni_not = st.text_area("Öğrenci Hakkında Not Ekleyin:")
@@ -409,7 +445,6 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                             for page in reader.pages:
                                 full_text += page.extract_text() + "\n"
                             
-                            # Basit Metin Parse Edici (Örnek Mantık)
                             lines = full_text.split('\n')
                             for line in lines:
                                 if ":" in line:
