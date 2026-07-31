@@ -61,14 +61,6 @@ def init_db():
         sinav_turu TEXT DEFAULT 'TYT'
     )''')
     
-    # Eski Veritabanında Eksik Sütun Varsa Otomatik Ekle (Migration)
-    cursor.execute("PRAGMA table_info(sinavlar)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'yayin_evi' not in columns:
-        cursor.execute("ALTER TABLE sinavlar ADD COLUMN yayin_evi TEXT")
-    if 'sinav_turu' not in columns:
-        cursor.execute("ALTER TABLE sinavlar ADD COLUMN sinav_turu TEXT DEFAULT 'TYT'")
-
     # Öğrenci Sonuçları Tablosu (AYT Dersleri ve Puanları Eklendi)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_sonuclari (
