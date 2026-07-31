@@ -141,9 +141,9 @@ def init_db():
         logo_base64 TEXT
     )''')
     
-    # Varsayılan Yöneticileri Ekle
-    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('admin', 'admin123', 'admin')")
-    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol) VALUES ('ogretmen', 'ogr123', 'ogretmen')")
+    # Varsayılan Yöneticileri Ekle / Güncelle
+    cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (1, 'admin', 'admin123', 'admin')")
+    cursor.execute("INSERT OR REPLACE INTO kullanicilar (id, kullanici_adi, sifre, rol) VALUES (2, 'ogretmen', 'ogretmen123', 'ogretmen')")
     
     conn.commit()
     conn.close()
