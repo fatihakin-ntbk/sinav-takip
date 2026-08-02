@@ -260,13 +260,10 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
-    # AKILLI AYT / TYT SORGUSU: Net verisine göre otomatik tür tespiti
+    # DOĞRUDAN VE ESNEK SQL SOROUSU
     df_sonuc = pd.read_sql_query('''
         SELECT s.sinav_id, s.sinav_adi, s.tarih, 
-               CASE 
-                   WHEN (os.ayt_toplam_net > 0 OR os.ayt_mat_net > 0 OR os.ayt_edebiyat_net > 0 OR os.ayt_say_puan > 0) THEN 'AYT'
-                   ELSE COALESCE(s.sinav_turu, 'TYT')
-               END as sinav_turu,
+               UPPER(TRIM(COALESCE(s.sinav_turu, 'TYT'))) as sinav_turu,
                COALESCE(os.turkce_net, 0) as turkce_net, 
                COALESCE(os.sosyal_net, 0) as sosyal_net, 
                COALESCE(os.matematik_net, 0) as matematik_net, 
@@ -290,11 +287,13 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         ORDER BY s.tarih ASC, s.sinav_id ASC
     ''', conn, params=(f"%{norm_adi}%",))
     
+    # ESNEK FİLTRELEME MANTIĞI
     if view_type != "Tümü":
+        # Hem sinav_turu kolonunu kontrol et hem de sınav adında arat
         df_filtered = df_sonuc[
-            (df_sonuc['sinav_turu'].str.upper() == view_type) | 
+            (df_sonuc['sinav_turu'].str.contains(view_type, case=False, na=False)) | 
             (df_sonuc['sinav_adi'].str.contains(view_type, case=False, na=False))
-        ]
+        ].copy()
     else:
         df_filtered = df_sonuc.copy()
 
@@ -302,13 +301,13 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.subheader(f"📈 Sınav Net Gelişimi ({view_type})")
         fig, ax = plt.subplots(figsize=(10, 4))
         
-        df_tyt = df_filtered[(df_filtered['sinav_turu'] == 'TYT') | (df_filtered['sinav_adi'].str.contains('TYT', case=False, na=False))]
-        df_ayt = df_filtered[(df_filtered['sinav_turu'] == 'AYT') | (df_filtered['sinav_adi'].str.contains('AYT', case=False, na=False))]
-        
-        if view_type in ["Tümü", "TYT"] and not df_tyt.empty:
-            ax.plot(df_tyt['sinav_adi'], df_tyt['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
-        if view_type in ["Tümü", "AYT"] and not df_ayt.empty:
-            ax.plot(df_ayt['sinav_adi'], df_ayt['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
+        if view_type == "AYT":
+            ax.plot(df_filtered['sinav_adi'], df_filtered['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
+        elif view_type == "TYT":
+            ax.plot(df_filtered['sinav_adi'], df_filtered['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
+        else:
+            ax.plot(df_filtered['sinav_adi'], df_filtered['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Net')
+            ax.plot(df_filtered['sinav_adi'], df_filtered['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Net')
             
         if hedef and hedef['net']:
             ax.axhline(y=hedef['net'], color='g', linestyle='--', label=f"Hedef Net ({hedef['net']})")
