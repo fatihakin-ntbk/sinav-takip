@@ -6,6 +6,17 @@ import matplotlib.pyplot as plt
 import base64
 import urllib.parse
 import re
+import io
+
+# ReportLab imports for PDF Generation
+try:
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 # --- 1. PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -249,6 +260,137 @@ def get_ogrenci_hedef(norm_adi):
         return {'bolum': res[0], 'net': res[1], 'puan': res[2], 'alan': res[3] or 'SAY'}
     return None
 
+# AI ÇALIŞMA PROGRAMI OLUŞTURUCU
+def generate_ai_study_plan(eksik_listesi):
+    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    study_plan = {day: [] for day in days}
+    
+    if not eksik_listesi:
+        study_plan["Pazartesi"].append("Genel TYT/AYT Tekrarı + 40 Paragraf Soru Çözümü")
+        study_plan["Salı"].append("Matematik Genel Soru Bankası Tarama (50 Soru)")
+        study_plan["Çarşamba"].append("Fen / Sosyal Bilimler Özet Okumaları")
+        study_plan["Perşembe"].append("Haftalık Konu Denemesi Çözümü")
+        study_plan["Cuma"].append("Geçmiş Yanlış Sorular Kitapçığı İncelemesi")
+        study_plan["Cumartesi"].append("Tam Boy TYT / AYT Deneme Sınavı")
+        study_plan["Pazar"].append("Deneme Analizi ve Dinlenme")
+        return study_plan
+
+    # Eksikleri günlere dağıt
+    idx = 0
+    for item in eksik_listesi:
+        ders = item.get('ders', 'Genel')
+        konu = item.get('konu', 'Konu Tekrarı')
+        day_name = days[idx % 6] # Pazar gününü denemeye ayırıyoruz
+        task = f"📌 **{ders}**: {konu} (Konu Anlatım + 30 Soru Çözümü)"
+        study_plan[day_name].append(task)
+        idx += 1
+        
+    study_plan["Pazar"].append("📝 **Haftalık Genel Deneme Sınavı** & Eksik Analizi")
+    return study_plan
+
+# PDF KARNE ÜRETİCİ
+def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, ai_plan, notlar):
+    if not REPORTLAB_AVAILABLE:
+        return None
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    
+    # Custom Styles
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=15)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#2B6CB0'), spaceBefore=10, spaceAfter=6)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=9, leading=12)
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica-Bold')
+    
+    elements = []
+    
+    # Başlık & Başlık Çizgisi
+    elements.append(Paragraph(f"<b>OGRENCI DENEME ANALIZ VE GELISIM KARNESI</b>", title_style))
+    elements.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#2B6CB0'), spaceAfter=15))
+    
+    # Öğrenci Bilgileri Tablosu
+    hedef_str = f"{hedef['bolum']} (Hedef Net: {hedef['net']})" if hedef else "Belirtilmedi"
+    info_data = [
+        [Paragraph("<b>Ogrenci Adı:</b>", normal_style), Paragraph(ogr_adi, normal_style), Paragraph("<b>Tarih:</b>", normal_style), Paragraph("2026", normal_style)],
+        [Paragraph("<b>Hedef Bölüm:</b>", normal_style), Paragraph(hedef_str, normal_style), Paragraph("<b>Durum:</b>", normal_style), Paragraph("Aktif Takipte", normal_style)]
+    ]
+    t_info = Table(info_data, colWidths=[90, 200, 60, 150])
+    t_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#EDF2F7')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E0'))
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 15))
+    
+    # Sınav Sonuçları Tablosu
+    elements.append(Paragraph("<b>1. Son Sınav Net Dereceleri</b>", section_style))
+    if not df_sonuclari.empty:
+        table_data = [["Sinav Adı", "Türü", "TYT Net", "AYT Net", "Sıra"]]
+        for _, r in df_sonuclari.tail(5).iterrows():
+            table_data.append([
+                str(r.get('sinav_adi', '')),
+                str(r.get('sinav_turu', '')),
+                str(r.get('tyt_toplam', 0)),
+                str(r.get('ayt_toplam', 0)),
+                str(r.get('kurum_sirasi', '-'))
+            ])
+        t_results = Table(table_data, colWidths=[180, 60, 80, 80, 80])
+        t_results.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3182CE')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E0')),
+            ('PADDING', (0,0), (-1,-1), 5)
+        ]))
+        elements.append(t_results)
+    elements.append(Spacer(1, 15))
+
+    # Eksik Konular Tablosu
+    elements.append(Paragraph("<b>2. Tespit Edilen Eksik Konular & Çalışma Alanları</b>", section_style))
+    if eksik_konular:
+        eksik_data = [["Ders", "Tekrar Edilecek Konu / Kazanım"]]
+        for ek in eksik_konular[:8]: # PDF sığması için ilk 8 eksik
+            eksik_data.append([ek.get('ders', ''), ek.get('konu', '')])
+        t_eksik = Table(eksik_data, colWidths=[120, 360])
+        t_eksik.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#E53E3E')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#FEB2B2')),
+            ('PADDING', (0,0), (-1,-1), 5)
+        ]))
+        elements.append(t_eksik)
+    else:
+        elements.append(Paragraph("Tebrikler, tespit edilen öncelikli bir eksik bulunmamaktadır.", normal_style))
+    elements.append(Spacer(1, 15))
+
+    # AI Destekli Haftalık Çalışma Programı
+    elements.append(Paragraph("<b>3. Yapay Zeka Destekli Haftalık Çalışma Programı</b>", section_style))
+    plan_data = [["Gün", "Atanan Görev ve Hedef Soru Sayısı"]]
+    for day, tasks in ai_plan.items():
+        task_str = " | ".join(tasks).replace("**", "")
+        plan_data.append([day, task_str if task_str else "Serbest Çalışma / Soru Çözümü"])
+    t_plan = Table(plan_data, colWidths=[90, 390])
+    t_plan.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#38A169')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#C6F6D5')),
+        ('PADDING', (0,0), (-1,-1), 5)
+    ]))
+    elements.append(t_plan)
+    
+    # Öğretmen Notları
+    if notlar:
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph("<b>4. Rehberlik & Öğretmen Notları</b>", section_style))
+        for n in notlar[:3]:
+            elements.append(Paragraph(f"• {n}", normal_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
 def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     conn = sqlite3.connect("sinav_takip.db")
     
@@ -260,10 +402,12 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
-    # DOĞRUDAN VE ESNEK SQL SOROUSU
     df_sonuc = pd.read_sql_query('''
         SELECT s.sinav_id, s.sinav_adi, s.tarih, 
-               UPPER(TRIM(COALESCE(s.sinav_turu, 'TYT'))) as sinav_turu,
+               CASE 
+                   WHEN (os.ayt_toplam_net > 0 OR os.ayt_mat_net > 0 OR os.ayt_edebiyat_net > 0 OR os.ayt_say_puan > 0) THEN 'AYT'
+                   ELSE COALESCE(s.sinav_turu, 'TYT')
+               END as sinav_turu,
                COALESCE(os.turkce_net, 0) as turkce_net, 
                COALESCE(os.sosyal_net, 0) as sosyal_net, 
                COALESCE(os.matematik_net, 0) as matematik_net, 
@@ -287,27 +431,27 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         ORDER BY s.tarih ASC, s.sinav_id ASC
     ''', conn, params=(f"%{norm_adi}%",))
     
-    # ESNEK FİLTRELEME MANTIĞI
     if view_type != "Tümü":
-        # Hem sinav_turu kolonunu kontrol et hem de sınav adında arat
         df_filtered = df_sonuc[
-            (df_sonuc['sinav_turu'].str.contains(view_type, case=False, na=False)) | 
+            (df_sonuc['sinav_turu'].str.upper() == view_type) | 
             (df_sonuc['sinav_adi'].str.contains(view_type, case=False, na=False))
-        ].copy()
+        ]
     else:
         df_filtered = df_sonuc.copy()
+
+    eksik_konu_listesi = []
 
     if not df_filtered.empty:
         st.subheader(f"📈 Sınav Net Gelişimi ({view_type})")
         fig, ax = plt.subplots(figsize=(10, 4))
         
-        if view_type == "AYT":
-            ax.plot(df_filtered['sinav_adi'], df_filtered['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
-        elif view_type == "TYT":
-            ax.plot(df_filtered['sinav_adi'], df_filtered['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
-        else:
-            ax.plot(df_filtered['sinav_adi'], df_filtered['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Net')
-            ax.plot(df_filtered['sinav_adi'], df_filtered['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Net')
+        df_tyt = df_filtered[(df_filtered['sinav_turu'] == 'TYT') | (df_filtered['sinav_adi'].str.contains('TYT', case=False, na=False))]
+        df_ayt = df_filtered[(df_filtered['sinav_turu'] == 'AYT') | (df_filtered['sinav_adi'].str.contains('AYT', case=False, na=False))]
+        
+        if view_type in ["Tümü", "TYT"] and not df_tyt.empty:
+            ax.plot(df_tyt['sinav_adi'], df_tyt['tyt_toplam'], marker='o', color='#3182ce', linewidth=2, label='TYT Toplam Net')
+        if view_type in ["Tümü", "AYT"] and not df_ayt.empty:
+            ax.plot(df_ayt['sinav_adi'], df_ayt['ayt_toplam'], marker='s', color='#e53e3e', linewidth=2, label='AYT Toplam Net')
             
         if hedef and hedef['net']:
             ax.axhline(y=hedef['net'], color='g', linestyle='--', label=f"Hedef Net ({hedef['net']})")
@@ -319,7 +463,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         st.pyplot(fig)
         
         st.subheader("📊 Sınav Detay Tablosu")
-        
         cols_to_show = ['sinav_adi', 'tarih', 'sinav_turu']
         if view_type == "TYT":
             cols_to_show += ['turkce_net', 'sosyal_net', 'matematik_net', 'fen_net', 'tyt_toplam', 'tyt_puan', 'kurum_sirasi']
@@ -353,14 +496,12 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             if not df_tum_eksikler.empty:
                 df_son_eksik = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]
                 if not df_son_eksik.empty:
+                    for _, row in df_son_eksik.iterrows():
+                        eksik_konu_listesi.append({'ders': row['ders'], 'konu': row['konu_kazanim']})
+                    
                     df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
                     df_eksik_ozet.columns = ['Ders', 'Konu / Kazanım', 'Tekrar Sayısı']
-                    
-                    styled_eksik = df_eksik_ozet.style.set_properties(**{
-                        'background-color': '#ffe5e5',
-                        'color': '#900c3f',
-                        'border-color': '#ffb3b3'
-                    })
+                    styled_eksik = df_eksik_ozet.style.set_properties(**{'background-color': '#ffe5e5', 'color': '#900c3f'})
                     st.dataframe(styled_eksik, use_container_width=True)
                 else:
                     st.success("🎉 Harika! Son sınavda tespit edilen yeni bir konu eksiği yok.")
@@ -372,28 +513,39 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             if not df_tum_eksikler.empty:
                 gecmis_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] != son_sinav_id]['konu_kazanim'].unique()
                 son_eksikler = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]['konu_kazanim'].unique()
-                
                 halledilen_konular = [konu for konu in gecmis_eksikler if konu not in son_eksikler]
                 
                 if halledilen_konular:
                     df_halledilen = df_tum_eksikler[df_tum_eksikler['konu_kazanim'].isin(halledilen_konular)][['ders', 'konu_kazanim']].drop_duplicates()
                     df_halledilen.columns = ['Ders', 'Konu / Kazanım']
-                    df_halledilen['Gelişim Durumu'] = '🎉 Son Sınavda Doğru Yapıldı'
-                    
-                    styled_halledilen = df_halledilen.style.set_properties(**{
-                        'background-color': '#e6ffe6',
-                        'color': '#006600',
-                        'border-color': '#b3ffb3'
-                    })
+                    styled_halledilen = df_halledilen.style.set_properties(**{'background-color': '#e6ffe6', 'color': '#006600'})
                     st.dataframe(styled_halledilen, use_container_width=True)
                 else:
                     st.info("Geçmiş sınavlarda yanlış yapılıp son sınavda düzeltilen henüz bir konu bulunmuyor.")
             else:
                 st.info("Henüz karşılaştırma yapılacak yeterli eksik veri analizi yok.")
-                
     else:
         st.warning(f"Bu öğrenciye ait {view_type} türünde girilmiş bir sınav sonucu bulunamadı.")
         
+    # YAPAY ZEKA DESTEKLİ ÇALIŞMA PROGRAMI MODÜLÜ
+    st.markdown("---")
+    st.subheader("🤖 Yapay Zeka Destekli Kişiselleştirilmiş Çalışma Programı")
+    ai_study_plan = generate_ai_study_plan(eksik_konu_listesi)
+    
+    col_days = st.columns(len(ai_study_plan))
+    for i, (day, tasks) in enumerate(ai_study_plan.items()):
+        with col_days[i]:
+            st.markdown(f"**{day}**")
+            if tasks:
+                for t in tasks:
+                    st.caption(t)
+            else:
+                st.caption("Genel Tekrar / Serbest")
+
+    # ÖĞRETMEN NOTLARI & PDF KARNE ÇIKTISI
+    df_notlar = pd.read_sql_query("SELECT tarih, not_metni FROM ogretmen_notlari WHERE ogrenci_adi_norm = ? ORDER BY id DESC", conn, params=(norm_adi,))
+    notlar_list = df_notlar['not_metni'].tolist() if not df_notlar.empty else []
+
     if allow_notes:
         st.markdown("---")
         st.subheader("📝 Öğretmen Görüş ve Notları")
@@ -405,12 +557,23 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                     cursor.execute("INSERT INTO ogretmen_notlari (ogrenci_adi_norm, tarih, not_metni) VALUES (?, DATE('now'), ?)", (norm_adi, yeni_not.strip()))
                     conn.commit()
                     st.success("Not kaydedildi!")
-                    
-        df_notlar = pd.read_sql_query("SELECT tarih, not_metni FROM ogretmen_notlari WHERE ogrenci_adi_norm = ? ORDER BY id DESC", conn, params=(norm_adi,))
-        if not df_notlar.empty:
-            for _, row in df_notlar.iterrows():
-                st.write(f"📅 **{row['tarih']}:** {row['not_metni']}")
-    
+                    st.rerun()
+
+    st.markdown("---")
+    st.subheader("📄 PDF Karne & Analiz Raporu İndir")
+    if REPORTLAB_AVAILABLE:
+        pdf_file = generate_pdf_report(ogr_adi, hedef, df_filtered, eksik_konu_listesi, ai_study_plan, notlar_list)
+        if pdf_file:
+            st.download_button(
+                label="📥 PDF Karnesini ve Çalışma Programını İndir",
+                data=pdf_file,
+                file_name=f"{norm_adi}_Gelisim_Karnesi.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
+    else:
+        st.warning("PDF çıktısı oluşturmak için lütfen terminalden `pip install reportlab` komutunu çalıştırın.")
+
     conn.close()
 
 # --- 4. AUTHENTICATION (GİRİŞ) ---
@@ -549,7 +712,6 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                             get_col_val(row, ['toplam net', 'tyt toplam', 'tyt net'], 0),
                             get_col_val(row, ['tyt puan', 'puan'], 0),
                             
-                            # AKILLI AYT SÜTUN OKUMA
                             get_col_val(row, ['ayt mat net', 'ayt matematik', 'ayt mat', 'mat2 net'], 0),
                             get_col_val(row, ['ayt fizik', 'fizik net', 'fiz net'], 0),
                             get_col_val(row, ['ayt kimya', 'kimya net', 'kim net'], 0),
@@ -602,9 +764,9 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
         else:
             st.warning("Lütfen dosya seçin ve sınav adını girin.")
 
-# --- DİĞER MENÜLER (Karneler, Ödevler, Ayarlar, vb.) ---
+# --- DİĞER MENÜLER ---
 elif secim in ["📊 Öğrenci Karneleri & Analiz", "🎓 Gelişim & Analiz Karnem"]:
-    st.title("📑 Öğrenci Gelişim Karnesi")
+    st.title("📑 Öğrenci Gelişim Karnesi & AI Çalışma Programı")
     conn = sqlite3.connect("sinav_takip.db")
     
     if st.session_state['role'] in ['admin', 'ogretmen']:
