@@ -16,6 +16,7 @@ try:
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
     from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.pdfmetrics import registerFont, registerFontFamily
     from reportlab.pdfbase.ttfonts import TTFont
     REPORTLAB_AVAILABLE = True
 except ImportError:
@@ -289,25 +290,28 @@ def generate_ai_study_plan(eksik_listesi):
     study_plan["Pazar"].append("📝 Haftalık Genel Deneme Sınavı & Eksik Analizi")
     return study_plan
 
-# TÜRKÇE FONT YÜKLEYİCİ
+# KAPSAMLI TÜRKÇE FONT KAYDI (Bold/Normal Aile Tanımlaması İle)
 def register_turkish_fonts():
-    try:
-        font_path = "C:\\Windows\\Fonts\\arial.ttf"
-        font_path_bold = "C:\\Windows\\Fonts\\arialbd.ttf"
-        
-        if not os.path.exists(font_path):
-            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            font_path_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-        if os.path.exists(font_path):
-            pdfmetrics.registerFont(TTFont('TRFont', font_path))
-            if os.path.exists(font_path_bold):
-                pdfmetrics.registerFont(TTFont('TRFont-Bold', font_path_bold))
-            else:
-                pdfmetrics.registerFont(TTFont('TRFont-Bold', font_path))
-            return 'TRFont', 'TRFont-Bold'
-    except Exception:
-        pass
+    font_candidates = [
+        ("C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\arialbd.ttf"),
+        ("C:\\Windows\\Fonts\\ARIAL.TTF", "C:\\Windows\\Fonts\\ARIALBD.TTF"),
+        ("C:\\Windows\\Fonts\\calibri.ttf", "C:\\Windows\\Fonts\\calibrib.ttf"),
+        ("C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\segoeuib.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
+    ]
+    
+    for norm_path, bold_path in font_candidates:
+        if os.path.exists(norm_path):
+            try:
+                b_path = bold_path if os.path.exists(bold_path) else norm_path
+                registerFont(TTFont('TRFont', norm_path))
+                registerFont(TTFont('TRFont-Bold', b_path))
+                # Font ailesi tanımlandığında <b> etiketi Helvetica'ya düşmez, TRFont-Bold kullanır
+                registerFontFamily('TRFont', normal='TRFont', bold='TRFont-Bold', italic='TRFont', boldItalic='TRFont-Bold')
+                return 'TRFont', 'TRFont-Bold'
+            except Exception:
+                continue
     
     return 'Helvetica', 'Helvetica-Bold'
 
@@ -322,6 +326,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=25, bottomMargin=25)
     styles = getSampleStyleSheet()
     
+    # Tüm ana stillere TRFont atanır
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_bold, fontSize=14, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=4)
     sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontName=font_normal, fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=10)
     section_style = ParagraphStyle('SectionStyle', parent=styles['Heading3'], fontName=font_bold, fontSize=10, textColor=colors.HexColor('#2B6CB0'), spaceBefore=8, spaceAfter=4)
