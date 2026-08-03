@@ -28,18 +28,13 @@ def tr_clean(text):
     if not isinstance(text, str):
         return ""
     
-    # Yaygın OCR ve PDF UTF-8 Bozulma Haritası
     replacements = {
-        '■': '', '■': '', '	': ' ',
-        'Ç': 'Ç', 'ç': 'ç', 'Ğ': 'Ğ', 'ğ': 'ğ',
-        'İ': 'İ', 'ı': 'ı', 'Ö': 'Ö', 'ö': 'ö',
-        'Ş': 'Ş', 'ş': 'ş', 'Ü': 'Ü', 'ü': 'ü',
+        '■': '', '	': ' ',
         'Ý': 'İ', 'ý': 'ı', 'Þ': 'Ş', 'þ': 'ş',
-        'Ð': 'Ğ', 'ð': 'ğ', 'I': 'I',
-        # Eksik karakter türevleri (Geli im -> Gelişim)
+        'Ð': 'Ğ', 'ð': 'ğ',
         'Geli im': 'Gelişim', 'S nav': 'Sınav', 'Ö renci': 'Öğrenci',
         'Çar amba': 'Çarşamba', 'Per embe': 'Perşembe', 'Görü ü': 'Görüşü',
-        'Öretmen': 'Öğretmen', 'Balar yla': 'Başarıyla', 'Kazan m': 'Kazanım',
+        'Öretmen': 'Öğrenci', 'Balar yla': 'Başarıyla', 'Kazan m': 'Kazanım',
         'Çalma': 'Çalışma', 'Anlat m': 'Anlatım', 'Dier': 'Diğer', 'Diler': 'Diğer',
         'Dimer': 'Diğer', 'Snav': 'Sınav', 'liskilendirir': 'İlişkilendirir'
     }
@@ -47,7 +42,6 @@ def tr_clean(text):
     for bad, good in replacements.items():
         text = text.replace(bad, good)
         
-    # Ekstrem boşluk ve regex temizliği
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -244,9 +238,12 @@ def generate_ai_study_plan(eksik_listesi):
     study_plan["Pazar"].append("📝 Haftalık Genel Deneme Sınavı & Eksik Analizi")
     return study_plan
 
-# --- REPORTLAB FONT VE YAZDIRMA MOTORU ---
+# --- REPORTLAB GELİŞMİŞ TÜRKÇE FONT YÜKLEME SİSTEMİ ---
 def register_turkish_fonts():
+    """İşletim sistemindeki veya proje klasöründeki Türkçe TTF fontları tarayıp ReportLab'a kaydeder."""
     font_candidates = [
+        ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"), # Proje klasöründeki font
+        ("arial.ttf", "arialbd.ttf"),             # Proje klasöründeki font
         ("C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\arialbd.ttf"),
         ("C:\\Windows\\Fonts\\calibri.ttf", "C:\\Windows\\Fonts\\calibrib.ttf"),
         ("C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\segoeuib.ttf"),
@@ -272,7 +269,6 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     font_normal, font_bold = register_turkish_fonts()
 
     buffer = io.BytesIO()
-    # A4 boyutları: 595.27 x 841.89 pt. Marjinler: 25pt. Kullanılabilir Genişlik: 545pt
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25, leftMargin=25, topMargin=20, bottomMargin=20)
     
     title_style = ParagraphStyle('TitleStyle', fontName=font_bold, fontSize=13, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=2)
@@ -349,7 +345,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(t_kazanim)
     elements.append(Spacer(1, 4))
 
-    # 4. HAFTALIK ÇALIŞMA PROGRAMI (SÜTUN GENİŞLİKLERİ DÜZELTİLDİ: 100pt + 445pt)
+    # 4. HAFTALIK ÇALIŞMA PROGRAMI
     elements.append(Paragraph("Yapay Zekâ Destekli Haftalık Çalışma Programı", section_style))
     plan_data = [[Paragraph("<b>Gün</b>", bold_style), Paragraph("<b>Atanan Görev ve Çalışma Odağı</b>", bold_style)]]
     for day, tasks in ai_plan.items():
@@ -388,7 +384,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
-    # KONTROL: Eksik sütunları veritabanına otomatik ekleme (Migration)
     cursor = conn.cursor()
     cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
     existing_cols = [row[1] for row in cursor.fetchall()]
@@ -406,7 +401,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             cursor.execute(f"ALTER TABLE ogrenci_sonuclari ADD COLUMN {col} {col_type}")
     conn.commit()
 
-    # GÜVENLİ SQL SOR GUSU
     df_sonuc = pd.read_sql_query('''
         SELECT s.sinav_id, s.sinav_adi, s.tarih,
                COALESCE(s.sinav_turu, 'TYT') as sinav_turu,
