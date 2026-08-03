@@ -290,7 +290,7 @@ def generate_ai_study_plan(eksik_listesi):
     study_plan["Pazar"].append("📝 Haftalık Genel Deneme Sınavı & Eksik Analizi")
     return study_plan
 
-# KAPSAMLI TÜRKÇE FONT KAYDI (Bold/Normal Aile Tanımlaması İle)
+# KAPSAMLI TÜRKÇE FONT KAYDI VE BOLD DÜZELTMESİ
 def register_turkish_fonts():
     font_candidates = [
         ("C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\arialbd.ttf"),
@@ -307,7 +307,6 @@ def register_turkish_fonts():
                 b_path = bold_path if os.path.exists(bold_path) else norm_path
                 registerFont(TTFont('TRFont', norm_path))
                 registerFont(TTFont('TRFont-Bold', b_path))
-                # Font ailesi tanımlandığında <b> etiketi Helvetica'ya düşmez, TRFont-Bold kullanır
                 registerFontFamily('TRFont', normal='TRFont', bold='TRFont-Bold', italic='TRFont', boldItalic='TRFont-Bold')
                 return 'TRFont', 'TRFont-Bold'
             except Exception:
@@ -315,7 +314,7 @@ def register_turkish_fonts():
     
     return 'Helvetica', 'Helvetica-Bold'
 
-# TÜRKÇE DESTEKLİ PDF KARNE ÜRETİCİSİ
+# TÜRKÇE DESTEKLİ VE KUTUCUKSUZ PDF KARNE ÜRETİCİSİ
 def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_konular, ai_plan, notlar):
     if not REPORTLAB_AVAILABLE:
         return None
@@ -324,27 +323,27 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=25, bottomMargin=25)
-    styles = getSampleStyleSheet()
     
-    # Tüm ana stillere TRFont atanır
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_bold, fontSize=14, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=4)
-    sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontName=font_normal, fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=10)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading3'], fontName=font_bold, fontSize=10, textColor=colors.HexColor('#2B6CB0'), spaceBefore=8, spaceAfter=4)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_normal, fontSize=8, leading=11)
+    # Tüm Stiller için Türkçe font zorunlu kılınıyor
+    title_style = ParagraphStyle('TitleStyle', fontName=font_bold, fontSize=14, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=4)
+    sub_title_style = ParagraphStyle('SubTitleStyle', fontName=font_normal, fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=10)
+    section_style = ParagraphStyle('SectionStyle', fontName=font_bold, fontSize=10, textColor=colors.HexColor('#2B6CB0'), spaceBefore=8, spaceAfter=4)
+    normal_style = ParagraphStyle('NormalStyle', fontName=font_normal, fontSize=8, leading=11)
+    bold_style = ParagraphStyle('BoldStyle', fontName=font_bold, fontSize=8, leading=11)
     
     elements = []
     
     # 1. KURUM BAŞLIĞI & ÖĞRENCİ BİLGİ KARTI
     kurum_adi, _ = get_kurum_bilgileri()
-    elements.append(Paragraph(f"<b>{kurum_adi.upper()}</b>", title_style))
+    elements.append(Paragraph(kurum_adi.upper(), title_style))
     elements.append(Paragraph("ÖĞRENCİ GELİŞİM VE KAZANIM EVALÜASYON KARNESİ", sub_title_style))
     
     last_row = df_sonuclari.iloc[-1] if not df_sonuclari.empty else {}
     hedef_str = f"{hedef['bolum']} (Hedef Net: {hedef['net']})" if hedef else "Belirtilmedi"
     
     info_data = [
-        [Paragraph(f"<b>Öğrenci Adı:</b> {ogr_adi}", normal_style), Paragraph(f"<b>Hedef:</b> {hedef_str}", normal_style)],
-        [Paragraph(f"<b>Son TYT Puanı:</b> {last_row.get('tyt_puan', 0):.2f}", normal_style), Paragraph(f"<b>Son Kurum Sırası:</b> {int(last_row.get('kurum_sirasi', 0)) if pd.notna(last_row.get('kurum_sirasi')) else '-'}", normal_style)]
+        [Paragraph(f"Öğrenci Adı: {ogr_adi}", bold_style), Paragraph(f"Hedef: {hedef_str}", normal_style)],
+        [Paragraph(f"Son TYT Puanı: {last_row.get('tyt_puan', 0):.2f}", normal_style), Paragraph(f"Son Kurum Sırası: {int(last_row.get('kurum_sirasi', 0)) if pd.notna(last_row.get('kurum_sirasi')) else '-'}", normal_style)]
     ]
     t_info = Table(info_data, colWidths=[260, 260])
     t_info.setStyle(TableStyle([
@@ -357,7 +356,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(Spacer(1, 10))
     
     # 2. ÜSTTE SINAVLARIN NET GELİŞİM GRAFİĞİ
-    elements.append(Paragraph("<b>📈 Sınav Net Gelişim Grafiği</b>", section_style))
+    elements.append(Paragraph("Sınav Net Gelişim Grafiği", section_style))
     if not df_sonuclari.empty:
         fig, ax = plt.subplots(figsize=(7, 2.0))
         if 'tyt_toplam' in df_sonuclari.columns:
@@ -379,13 +378,13 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(Spacer(1, 8))
 
     # 3. İKİ SÜTUNLU KAZANIM TABLOSU
-    elements.append(Paragraph("<b>📊 Kazanım ve Konu Durum Analizi</b>", section_style))
+    elements.append(Paragraph("Kazanım ve Konu Durum Analizi", section_style))
     
-    eksik_text = "<br/>".join([f"• ⚠️ <b>[{ek.get('ders','')}]</b> {ek.get('konu','')}" for ek in eksik_konular[:5]]) if eksik_konular else "• Belirgin bir eksik konu tespit edilmedi."
-    halledilen_text = "<br/>".join([f"• ✅ <b>[{h.get('ders','')}]</b> {h.get('konu','')}" for h in halledilen_konular[:5]]) if halledilen_konular else "• Geçmiş sınavlardan tamamen çözülmüş konu kaydı yok."
+    eksik_text = "<br/>".join([f"• [{ek.get('ders','')}] {ek.get('konu','')}" for ek in eksik_konular[:5]]) if eksik_konular else "• Belirgin bir eksik konu tespit edilmedi."
+    halledilen_text = "<br/>".join([f"• [{h.get('ders','')}] {h.get('konu','')}" for h in halledilen_konular[:5]]) if halledilen_konular else "• Geçmiş sınavlardan tamamen çözülmüş konu kaydı yok."
 
     kazanim_data = [
-        [Paragraph("<b>🚨 Acil Müdahale Gereken Konular</b>", normal_style), Paragraph("<b>💪 Başarıyla Halledilen Konular</b>", normal_style)],
+        [Paragraph("Acil Müdahale Gereken Konular", bold_style), Paragraph("Başarıyla Halledilen Konular", bold_style)],
         [Paragraph(eksik_text, normal_style), Paragraph(halledilen_text, normal_style)]
     ]
     t_kazanim = Table(kazanim_data, colWidths=[255, 255])
@@ -401,11 +400,11 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(Spacer(1, 8))
 
     # 4. YAPAY ZEKA DESTEKLİ HAFTALIK ÇALIŞMA PROGRAMI
-    elements.append(Paragraph("<b>🤖 Yapay Zekâ Destekli Haftalık Çalışma Programı</b>", section_style))
-    plan_data = [["Gün", "Atanan Görev ve Çalışma Odağı"]]
+    elements.append(Paragraph("Yapay Zekâ Destekli Haftalık Çalışma Programı", section_style))
+    plan_data = [[Paragraph("<b>Gün</b>", bold_style), Paragraph("<b>Atanan Görev ve Çalışma Odağı</b>", bold_style)]]
     for day, tasks in ai_plan.items():
         task_str = " <br/> ".join(tasks).replace("**", "")
-        plan_data.append([day, Paragraph(task_str if task_str else "Serbest Çalışma / Soru Çözümü", normal_style)])
+        plan_data.append([Paragraph(day, bold_style), Paragraph(task_str if task_str else "Serbest Çalışma / Soru Çözümü", normal_style)])
     
     t_plan = Table(plan_data, colWidths=[80, 430])
     t_plan.setStyle(TableStyle([
@@ -419,9 +418,9 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(Spacer(1, 8))
     
     # 5. REHBERLİK VE ÖĞRETMEN GÖRÜŞÜ
-    elements.append(Paragraph("<b>✍️ Rehberlik & Öğretmen Görüşü</b>", section_style))
-    not_text = "<br/>".join([f"• {n}" for n in notlar[:2]]) if notlar else "<i>Öğrencimizin sınav grafiklerindeki ivmesi yakından takip edilmektedir. Yukarıda belirtilen eksik konulara odaklanılması önerilir.</i>"
-    elements.append(Paragraph(not_text, ParagraphStyle('NoteStyle', parent=normal_style, backColor=colors.HexColor("#EDF2F7"), borderPadding=6, borderColor=colors.HexColor("#CBD5E0"), borderLineWidth=1)))
+    elements.append(Paragraph("Rehberlik & Öğretmen Görüşü", section_style))
+    not_text = "<br/>".join([f"• {n}" for n in notlar[:2]]) if notlar else "Öğrencimizin sınav grafiklerindeki ivmesi yakından takip edilmektedir. Yukarıda belirtilen eksik konulara odaklanılması önerilir."
+    elements.append(Paragraph(not_text, ParagraphStyle('NoteStyle', parent=normal_style, fontName=font_normal, backColor=colors.HexColor("#EDF2F7"), borderPadding=6, borderColor=colors.HexColor("#CBD5E0"), borderLineWidth=1)))
 
     doc.build(elements)
     buffer.seek(0)
