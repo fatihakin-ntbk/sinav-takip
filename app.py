@@ -384,48 +384,37 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
-    existing_cols = [row[1] for row in cursor.fetchall()]
-    
-    required_cols = {
-        'ayt_mat_net': 'REAL DEFAULT 0', 'ayt_fizik_net': 'REAL DEFAULT 0',
-        'ayt_kimya_net': 'REAL DEFAULT 0', 'ayt_biyo_net': 'REAL DEFAULT 0',
-        'ayt_edebiyat_net': 'REAL DEFAULT 0', 'ayt_tarih1_net': 'REAL DEFAULT 0',
-        'ayt_cogr1_net': 'REAL DEFAULT 0', 'ayt_toplam_net': 'REAL DEFAULT 0',
-        'ayt_say_puan': 'REAL DEFAULT 0', 'ayt_ea_puan': 'REAL DEFAULT 0'
-    }
-    
-    for col, col_type in required_cols.items():
-        if col not in existing_cols:
-            cursor.execute(f"ALTER TABLE ogrenci_sonuclari ADD COLUMN {col} {col_type}")
-    conn.commit()
-
-    df_sonuc = pd.read_sql_query('''
-        SELECT s.sinav_id, s.sinav_adi, s.tarih,
-               COALESCE(s.sinav_turu, 'TYT') as sinav_turu,
-               COALESCE(os.turkce_net, 0) as turkce_net, 
-               COALESCE(os.sosyal_net, 0) as sosyal_net, 
-               COALESCE(os.matematik_net, 0) as matematik_net, 
-               COALESCE(os.fen_net, 0) as fen_net, 
-               COALESCE(os.toplam_net, 0) as tyt_toplam, 
-               COALESCE(os.tyt_puan, 0) as tyt_puan,
-               COALESCE(os.ayt_mat_net, 0) as ayt_mat_net, 
-               COALESCE(os.ayt_fizik_net, 0) as ayt_fizik_net, 
-               COALESCE(os.ayt_kimya_net, 0) as ayt_kimya_net, 
-               COALESCE(os.ayt_biyo_net, 0) as ayt_biyo_net, 
-               COALESCE(os.ayt_edebiyat_net, 0) as ayt_edebiyat_net, 
-               COALESCE(os.ayt_tarih1_net, 0) as ayt_tarih1_net, 
-               COALESCE(os.ayt_cogr1_net, 0) as ayt_cogr1_net, 
-               COALESCE(os.ayt_toplam_net, 0) as ayt_toplam,
-               COALESCE(os.ayt_say_puan, 0) as ayt_say_puan, 
-               COALESCE(os.ayt_ea_puan, 0) as ayt_ea_puan, 
-               COALESCE(os.kurum_sirasi, 0) as kurum_sirasi
-        FROM ogrenci_sonuclari os
-        JOIN sinavlar s ON os.sinav_id = s.sinav_id
-        WHERE os.ogrenci_adi_norm LIKE ?
-        ORDER BY s.tarih ASC, s.sinav_id ASC
-    ''', conn, params=(f"%{norm_adi}%",))
+    # Güvenli Sorgu: Kolonların varlığını kontrol etmek yerine doğrudan SELECT veya COALESCE kullanıyoruz
+    try:
+        df_sonuc = pd.read_sql_query('''
+            SELECT s.sinav_id, s.sinav_adi, s.tarih,
+                   COALESCE(s.sinav_turu, 'TYT') as sinav_turu,
+                   COALESCE(os.turkce_net, 0) as turkce_net, 
+                   COALESCE(os.sosyal_net, 0) as sosyal_net, 
+                   COALESCE(os.matematik_net, 0) as matematik_net, 
+                   COALESCE(os.fen_net, 0) as fen_net, 
+                   COALESCE(os.toplam_net, 0) as tyt_toplam, 
+                   COALESCE(os.tyt_puan, 0) as tyt_puan,
+                   COALESCE(os.ayt_mat_net, 0) as ayt_mat_net, 
+                   COALESCE(os.ayt_fizik_net, 0) as ayt_fizik_net, 
+                   COALESCE(os.ayt_kimya_net, 0) as ayt_kimya_net, 
+                   COALESCE(os.ayt_biyo_net, 0) as ayt_biyo_net, 
+                   COALESCE(os.ayt_edebiyat_net, 0) as ayt_edebiyat_net, 
+                   COALESCE(os.ayt_tarih1_net, 0) as ayt_tarih1_net, 
+                   COALESCE(os.ayt_cogr1_net, 0) as ayt_cogr1_net, 
+                   COALESCE(os.ayt_toplam_net, 0) as ayt_toplam,
+                   COALESCE(os.ayt_say_puan, 0) as ayt_say_puan, 
+                   COALESCE(os.ayt_ea_puan, 0) as ayt_ea_puan, 
+                   COALESCE(os.kurum_sirasi, 0) as kurum_sirasi
+            FROM ogrenci_sonuclari os
+            JOIN sinavlar s ON os.sinav_id = s.sinav_id
+            WHERE os.ogrenci_adi_norm LIKE ?
+            ORDER BY s.tarih ASC, s.sinav_id ASC
+        ''', conn, params=(f"%{norm_adi}%",))
+    except Exception as e:
+        st.error("Veritabanı okunurken bir hata oluştu. Lütfen veritabanını sıfırlamayı veya eski sınav kaydını silip tekrar yüklemeyi deneyin.")
+        conn.close()
+        return
     
     if view_type != "Tümü":
         df_filtered = df_sonuc[
