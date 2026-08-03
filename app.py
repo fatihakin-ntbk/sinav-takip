@@ -7,6 +7,7 @@ import base64
 import urllib.parse
 import re
 import io
+import os
 
 # ReportLab imports for PDF Generation
 try:
@@ -14,6 +15,8 @@ try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
@@ -260,7 +263,6 @@ def get_ogrenci_hedef(norm_adi):
         return {'bolum': res[0], 'net': res[1], 'puan': res[2], 'alan': res[3] or 'SAY'}
     return None
 
-# AI ÇALIŞMA PROGRAMI OLUŞTURUCU
 def generate_ai_study_plan(eksik_listesi):
     days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
     study_plan = {day: [] for day in days}
@@ -287,19 +289,43 @@ def generate_ai_study_plan(eksik_listesi):
     study_plan["Pazar"].append("📝 Haftalık Genel Deneme Sınavı & Eksik Analizi")
     return study_plan
 
-# ENTEGRE EDİLEN YENİ PDF KARNE ÜRETİCİSİ
+# TÜRKÇE FONT YÜKLEYİCİ
+def register_turkish_fonts():
+    try:
+        font_path = "C:\\Windows\\Fonts\\arial.ttf"
+        font_path_bold = "C:\\Windows\\Fonts\\arialbd.ttf"
+        
+        if not os.path.exists(font_path):
+            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            font_path_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+        if os.path.exists(font_path):
+            pdfmetrics.registerFont(TTFont('TRFont', font_path))
+            if os.path.exists(font_path_bold):
+                pdfmetrics.registerFont(TTFont('TRFont-Bold', font_path_bold))
+            else:
+                pdfmetrics.registerFont(TTFont('TRFont-Bold', font_path))
+            return 'TRFont', 'TRFont-Bold'
+    except Exception:
+        pass
+    
+    return 'Helvetica', 'Helvetica-Bold'
+
+# TÜRKÇE DESTEKLİ PDF KARNE ÜRETİCİSİ
 def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_konular, ai_plan, notlar):
     if not REPORTLAB_AVAILABLE:
         return None
+
+    font_normal, font_bold = register_turkish_fonts()
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=25, bottomMargin=25)
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=15, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=4)
-    sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=10)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading3'], fontSize=10, textColor=colors.HexColor('#2B6CB0'), spaceBefore=8, spaceAfter=4)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=8, leading=11)
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_bold, fontSize=14, textColor=colors.HexColor('#1A365D'), alignment=1, spaceAfter=4)
+    sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontName=font_normal, fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=10)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading3'], fontName=font_bold, fontSize=10, textColor=colors.HexColor('#2B6CB0'), spaceBefore=8, spaceAfter=4)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_normal, fontSize=8, leading=11)
     
     elements = []
     
@@ -347,7 +373,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
         elements.append(Image(img_buf, width=500, height=125))
     elements.append(Spacer(1, 8))
 
-    # 3. İKİ SÜTUNLU KAZANIM TABLOSU (Sol: Eksikler, Sağ: Halledilenler)
+    # 3. İKİ SÜTUNLU KAZANIM TABLOSU
     elements.append(Paragraph("<b>📊 Kazanım ve Konu Durum Analizi</b>", section_style))
     
     eksik_text = "<br/>".join([f"• ⚠️ <b>[{ek.get('ders','')}]</b> {ek.get('konu','')}" for ek in eksik_konular[:5]]) if eksik_konular else "• Belirgin bir eksik konu tespit edilmedi."
@@ -535,7 +561,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     else:
         st.warning(f"Bu öğrenciye ait {view_type} türünde girilmiş bir sınav sonucu bulunamadı.")
         
-    # YAPAY ZEKA DESTEKLİ ÇALIŞMA PROGRAMI MODÜLÜ
     st.markdown("---")
     st.subheader("🤖 Yapay Zeka Destekli Kişiselleştirilmiş Çalışma Programı")
     ai_study_plan = generate_ai_study_plan(eksik_konu_listesi)
@@ -550,7 +575,6 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             else:
                 st.caption("Genel Tekrar / Serbest")
 
-    # ÖĞRETMEN NOTLARI & PDF KARNE ÇIKTISI
     df_notlar = pd.read_sql_query("SELECT tarih, not_metni FROM ogretmen_notlari WHERE ogrenci_adi_norm = ? ORDER BY id DESC", conn, params=(norm_adi,))
     notlar_list = df_notlar['not_metni'].tolist() if not df_notlar.empty else []
 
@@ -584,7 +608,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
 
     conn.close()
 
-# --- 4. AUTHENTICATION (GİRİŞ) ---
+# --- 4. AUTHENTICATION ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'user_info' not in st.session_state:
@@ -668,7 +692,6 @@ secim = st.sidebar.radio("Navigasyon Menüsü:", menu_options)
 
 # --- 6. PAGE ROUTING & LOGIC ---
 
-# --- 1. MENÜ: SINAV YÜKLE & VERİ AKTARIMI ---
 if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("📥 Sınav Sonuçları ve Analiz PDF Yükleme")
     
@@ -772,7 +795,6 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
         else:
             st.warning("Lütfen dosya seçin ve sınav adını girin.")
 
-# --- DİĞER MENÜLER ---
 elif secim in ["📊 Öğrenci Karneleri & Analiz", "🎓 Gelişim & Analiz Karnem"]:
     st.title("📑 Öğrenci Gelişim Karnesi & AI Çalışma Programı")
     conn = sqlite3.connect("sinav_takip.db")
