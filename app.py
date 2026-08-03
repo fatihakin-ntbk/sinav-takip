@@ -388,12 +388,28 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     
     view_type = st.radio("İncelenecek Sınav Türünü Seçin:", ["Tümü", "TYT", "AYT"], horizontal=True)
     
+    # KONTROL: Eksik sütunları veritabanına otomatik ekleme (Migration)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
+    existing_cols = [row[1] for row in cursor.fetchall()]
+    
+    required_cols = {
+        'ayt_mat_net': 'REAL DEFAULT 0', 'ayt_fizik_net': 'REAL DEFAULT 0',
+        'ayt_kimya_net': 'REAL DEFAULT 0', 'ayt_biyo_net': 'REAL DEFAULT 0',
+        'ayt_edebiyat_net': 'REAL DEFAULT 0', 'ayt_tarih1_net': 'REAL DEFAULT 0',
+        'ayt_cogr1_net': 'REAL DEFAULT 0', 'ayt_toplam_net': 'REAL DEFAULT 0',
+        'ayt_say_puan': 'REAL DEFAULT 0', 'ayt_ea_puan': 'REAL DEFAULT 0'
+    }
+    
+    for col, col_type in required_cols.items():
+        if col not in existing_cols:
+            cursor.execute(f"ALTER TABLE ogrenci_sonuclari ADD COLUMN {col} {col_type}")
+    conn.commit()
+
+    # GÜVENLİ SQL SOR GUSU
     df_sonuc = pd.read_sql_query('''
-        SELECT s.sinav_id, s.sinav_adi, s.tarih, 
-               CASE 
-                   WHEN (os.ayt_toplam_net > 0 OR os.ayt_mat_net > 0 OR os.ayt_edebiyat_net > 0 OR os.ayt_say_puan > 0) THEN 'AYT'
-                   ELSE COALESCE(s.sinav_turu, 'TYT')
-               END as sinav_turu,
+        SELECT s.sinav_id, s.sinav_adi, s.tarih,
+               COALESCE(s.sinav_turu, 'TYT') as sinav_turu,
                COALESCE(os.turkce_net, 0) as turkce_net, 
                COALESCE(os.sosyal_net, 0) as sosyal_net, 
                COALESCE(os.matematik_net, 0) as matematik_net, 
@@ -410,7 +426,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                COALESCE(os.ayt_toplam_net, 0) as ayt_toplam,
                COALESCE(os.ayt_say_puan, 0) as ayt_say_puan, 
                COALESCE(os.ayt_ea_puan, 0) as ayt_ea_puan, 
-               os.kurum_sirasi
+               COALESCE(os.kurum_sirasi, 0) as kurum_sirasi
         FROM ogrenci_sonuclari os
         JOIN sinavlar s ON os.sinav_id = s.sinav_id
         WHERE os.ogrenci_adi_norm LIKE ?
