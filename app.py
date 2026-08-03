@@ -22,6 +22,25 @@ try:
 except ImportError:
     REPORTLAB_AVAILABLE = False
 
+# --- TÜRKÇE KARAKTER DÜZELTME & SANITIZATION ---
+def fix_tr_chars(text):
+    """Bozuk okunan veya garip karakter kodlamasına sahip Türkçe metinleri düzeltir."""
+    if not isinstance(text, str):
+        return ""
+    
+    # Yaygın bozuk PDF/OCR karakter dönüşüm haritası
+    char_map = {
+        'ı': 'ı', 'İ': 'İ', 'ğ': 'ğ', 'Ğ': 'Ğ', 
+        'ü': 'ü', 'Ü': 'Ü', 'ş': 'ş', 'Ş': 'Ş', 
+        'ö': 'ö', 'Ö': 'Ö', 'ç': 'ç', 'Ç': 'Ç',
+        'Ý': 'İ', 'Ý': 'I', 'Þ': 'Ş', 'þ': 'ş',
+        'Ð': 'Ğ', 'ð': 'ğ', 'Ý': 'İ', 'ý': 'ı'
+    }
+    for bad, good in char_map.items():
+        text = text.replace(bad, good)
+        
+    return text
+
 # --- 1. PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
     page_title="Sınav Takip & Analiz Portalı",
@@ -206,7 +225,7 @@ init_db()
 def normalize_name(text):
     if not isinstance(text, str):
         return ""
-    text = text.strip().upper()
+    text = fix_tr_chars(text.strip().upper())
     tr_map = str.maketrans("ÇĞİÖŞÜI", "CGIOSUI")
     text = text.translate(tr_map)
     text = re.sub(r'[^A-Z0-9\s]', '', text)
@@ -225,8 +244,8 @@ def get_col_val(row, possible_names, default=0):
     return default
 
 def detect_subject_from_topic(topic_str):
-    t = topic_str.lower()
-    if any(k in t for k in ['paragraf', 'sozcuk', 'cümle', 'yazim', 'noktalama', 'dil bilgisi', 'edebiyat', 'turkce', 'şiir', 'roman']):
+    t = fix_tr_chars(topic_str).lower()
+    if any(k in t for k in ['paragraf', 'sozcuk', 'sözcük', 'cümle', 'cumle', 'yazim', 'yazım', 'noktalama', 'dil bilgisi', 'edebiyat', 'turkce', 'türkçe', 'şiir', 'roman']):
         return "Türkçe / Edebiyat"
     elif any(k in t for k in ['üslü', 'köklü', 'fonksiyon', 'polinom', 'trigonometri', 'türev', 'integral', 'limit', 'logaritma', 'matematik', 'geometri']):
         return "Matematik"
@@ -251,7 +270,7 @@ def get_kurum_bilgileri():
     res = cursor.fetchone()
     conn.close()
     if res:
-        return res[0] or "Eğitim Kurumu", res[1] or ""
+        return fix_tr_chars(res[0]) if res[0] else "Eğitim Kurumu", res[1] or ""
     return "Eğitim Kurumu", ""
 
 def get_ogrenci_hedef(norm_adi):
@@ -261,7 +280,7 @@ def get_ogrenci_hedef(norm_adi):
     res = cursor.fetchone()
     conn.close()
     if res:
-        return {'bolum': res[0], 'net': res[1], 'puan': res[2], 'alan': res[3] or 'SAY'}
+        return {'bolum': fix_tr_chars(res[0]), 'net': res[1], 'puan': res[2], 'alan': res[3] or 'SAY'}
     return None
 
 def generate_ai_study_plan(eksik_listesi):
@@ -280,8 +299,8 @@ def generate_ai_study_plan(eksik_listesi):
 
     idx = 0
     for item in eksik_listesi:
-        ders = item.get('ders', 'Genel')
-        konu = item.get('konu', 'Konu Tekrarı')
+        ders = fix_tr_chars(item.get('ders', 'Genel'))
+        konu = fix_tr_chars(item.get('konu', 'Konu Tekrarı'))
         day_name = days[idx % 6]
         task = f"📌 {ders}: {konu} (Konu Anlatım + 30 Soru)"
         study_plan[day_name].append(task)
@@ -335,14 +354,14 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     
     # 1. KURUM BAŞLIĞI & ÖĞRENCİ BİLGİ KARTI
     kurum_adi, _ = get_kurum_bilgileri()
-    elements.append(Paragraph(kurum_adi.upper(), title_style))
+    elements.append(Paragraph(fix_tr_chars(kurum_adi).upper(), title_style))
     elements.append(Paragraph("ÖĞRENCİ GELİŞİM VE KAZANIM EVALÜASYON KARNESİ", sub_title_style))
     
     last_row = df_sonuclari.iloc[-1] if not df_sonuclari.empty else {}
-    hedef_str = f"{hedef['bolum']} (Hedef Net: {hedef['net']})" if hedef else "Belirtilmedi"
+    hedef_str = f"{fix_tr_chars(hedef['bolum'])} (Hedef Net: {hedef['net']})" if hedef else "Belirtilmedi"
     
     info_data = [
-        [Paragraph(f"Öğrenci Adı: {ogr_adi}", bold_style), Paragraph(f"Hedef: {hedef_str}", normal_style)],
+        [Paragraph(f"Öğrenci Adı: {fix_tr_chars(ogr_adi)}", bold_style), Paragraph(f"Hedef: {hedef_str}", normal_style)],
         [Paragraph(f"Son TYT Puanı: {last_row.get('tyt_puan', 0):.2f}", normal_style), Paragraph(f"Son Kurum Sırası: {int(last_row.get('kurum_sirasi', 0)) if pd.notna(last_row.get('kurum_sirasi')) else '-'}", normal_style)]
     ]
     t_info = Table(info_data, colWidths=[260, 260])
@@ -380,8 +399,8 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     # 3. İKİ SÜTUNLU KAZANIM TABLOSU
     elements.append(Paragraph("Kazanım ve Konu Durum Analizi", section_style))
     
-    eksik_text = "<br/>".join([f"• [{ek.get('ders','')}] {ek.get('konu','')}" for ek in eksik_konular[:5]]) if eksik_konular else "• Belirgin bir eksik konu tespit edilmedi."
-    halledilen_text = "<br/>".join([f"• [{h.get('ders','')}] {h.get('konu','')}" for h in halledilen_konular[:5]]) if halledilen_konular else "• Geçmiş sınavlardan tamamen çözülmüş konu kaydı yok."
+    eksik_text = "<br/>".join([f"• [{fix_tr_chars(ek.get('ders',''))}] {fix_tr_chars(ek.get('konu',''))}" for ek in eksik_konular[:5]]) if eksik_konular else "• Belirgin bir eksik konu tespit edilmedi."
+    halledilen_text = "<br/>".join([f"• [{fix_tr_chars(h.get('ders',''))}] {fix_tr_chars(h.get('konu',''))}" for h in halledilen_konular[:5]]) if halledilen_konular else "• Geçmiş sınavlardan tamamen çözülmüş konu kaydı yok."
 
     kazanim_data = [
         [Paragraph("Acil Müdahale Gereken Konular", bold_style), Paragraph("Başarıyla Halledilen Konular", bold_style)],
@@ -403,8 +422,8 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     elements.append(Paragraph("Yapay Zekâ Destekli Haftalık Çalışma Programı", section_style))
     plan_data = [[Paragraph("<b>Gün</b>", bold_style), Paragraph("<b>Atanan Görev ve Çalışma Odağı</b>", bold_style)]]
     for day, tasks in ai_plan.items():
-        task_str = " <br/> ".join(tasks).replace("**", "")
-        plan_data.append([Paragraph(day, bold_style), Paragraph(task_str if task_str else "Serbest Çalışma / Soru Çözümü", normal_style)])
+        task_str = " <br/> ".join([fix_tr_chars(t) for t in tasks]).replace("**", "")
+        plan_data.append([Paragraph(fix_tr_chars(day), bold_style), Paragraph(task_str if task_str else "Serbest Çalışma / Soru Çözümü", normal_style)])
     
     t_plan = Table(plan_data, colWidths=[80, 430])
     t_plan.setStyle(TableStyle([
@@ -419,7 +438,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
     
     # 5. REHBERLİK VE ÖĞRETMEN GÖRÜŞÜ
     elements.append(Paragraph("Rehberlik & Öğretmen Görüşü", section_style))
-    not_text = "<br/>".join([f"• {n}" for n in notlar[:2]]) if notlar else "Öğrencimizin sınav grafiklerindeki ivmesi yakından takip edilmektedir. Yukarıda belirtilen eksik konulara odaklanılması önerilir."
+    not_text = "<br/>".join([f"• {fix_tr_chars(n)}" for n in notlar[:2]]) if notlar else "Öğrencimizin sınav grafiklerindeki ivmesi yakından takip edilmektedir. Yukarıda belirtilen eksik konulara odaklanılması önerilir."
     elements.append(Paragraph(not_text, ParagraphStyle('NoteStyle', parent=normal_style, fontName=font_normal, backColor=colors.HexColor("#EDF2F7"), borderPadding=6, borderColor=colors.HexColor("#CBD5E0"), borderLineWidth=1)))
 
     doc.build(elements)
@@ -429,7 +448,7 @@ def generate_pdf_report(ogr_adi, hedef, df_sonuclari, eksik_konular, halledilen_
 def render_student_report(norm_adi, ogr_adi, allow_notes=False):
     conn = sqlite3.connect("sinav_takip.db")
     
-    st.header(f"👤 Öğrenci: {ogr_adi}")
+    st.header(f"👤 Öğrenci: {fix_tr_chars(ogr_adi)}")
     
     hedef = get_ogrenci_hedef(norm_adi)
     if hedef:
@@ -522,6 +541,9 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
         ''', conn, params=(f"%{norm_adi}%",))
 
         if not df_tum_eksikler.empty:
+            df_tum_eksikler['ders'] = df_tum_eksikler['ders'].apply(fix_tr_chars)
+            df_tum_eksikler['konu_kazanim'] = df_tum_eksikler['konu_kazanim'].apply(fix_tr_chars)
+            
             df_tum_eksikler['ders'] = df_tum_eksikler.apply(
                 lambda r: detect_subject_from_topic(r['konu_kazanim']) if r['ders'] in ['Genel', 'Genel / Diğer', ''] else r['ders'],
                 axis=1
@@ -533,7 +555,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 df_son_eksik = df_tum_eksikler[df_tum_eksikler['sinav_id'] == son_sinav_id]
                 if not df_son_eksik.empty:
                     for _, row in df_son_eksik.iterrows():
-                        eksik_konu_listesi.append({'ders': row['ders'], 'konu': row['konu_kazanim']})
+                        eksik_konu_listesi.append({'ders': fix_tr_chars(row['ders']), 'konu': fix_tr_chars(row['konu_kazanim'])})
                     
                     df_eksik_ozet = df_son_eksik.groupby(['ders', 'konu_kazanim']).size().reset_index(name='Son Sınav Tekrarı')
                     df_eksik_ozet.columns = ['Ders', 'Konu / Kazanım', 'Tekrar Sayısı']
@@ -554,7 +576,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 if halledilen_konular:
                     df_halledilen = df_tum_eksikler[df_tum_eksikler['konu_kazanim'].isin(halledilen_konular)][['ders', 'konu_kazanim']].drop_duplicates()
                     for _, row in df_halledilen.iterrows():
-                        halledilen_konu_listesi.append({'ders': row['ders'], 'konu': row['konu_kazanim']})
+                        halledilen_konu_listesi.append({'ders': fix_tr_chars(row['ders']), 'konu': fix_tr_chars(row['konu_kazanim'])})
                     df_halledilen.columns = ['Ders', 'Konu / Kazanım']
                     styled_halledilen = df_halledilen.style.set_properties(**{'background-color': '#e6ffe6', 'color': '#006600'})
                     st.dataframe(styled_halledilen, use_container_width=True)
@@ -580,7 +602,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
                 st.caption("Genel Tekrar / Serbest")
 
     df_notlar = pd.read_sql_query("SELECT tarih, not_metni FROM ogretmen_notlari WHERE ogrenci_adi_norm = ? ORDER BY id DESC", conn, params=(norm_adi,))
-    notlar_list = df_notlar['not_metni'].tolist() if not df_notlar.empty else []
+    notlar_list = [fix_tr_chars(n) for n in df_notlar['not_metni'].tolist()] if not df_notlar.empty else []
 
     if allow_notes:
         st.markdown("---")
@@ -590,7 +612,7 @@ def render_student_report(norm_adi, ogr_adi, allow_notes=False):
             if st.form_submit_button("Notu Kaydet"):
                 if yeni_not.strip():
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO ogretmen_notlari (ogrenci_adi_norm, tarih, not_metni) VALUES (?, DATE('now'), ?)", (norm_adi, yeni_not.strip()))
+                    cursor.execute("INSERT INTO ogretmen_notlari (ogrenci_adi_norm, tarih, not_metni) VALUES (?, DATE('now'), ?)", (norm_adi, fix_tr_chars(yeni_not.strip())))
                     conn.commit()
                     st.success("Not kaydedildi!")
                     st.rerun()
@@ -714,7 +736,7 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                 conn = sqlite3.connect("sinav_takip.db")
                 cursor = conn.cursor()
                 
-                cursor.execute("INSERT INTO sinavlar (sinav_adi, tarih, yayin_evi, sinav_turu) VALUES (?, ?, ?, ?)", (sinav_adi, str(sinav_tarihi), yayin_evi, sinav_turu))
+                cursor.execute("INSERT INTO sinavlar (sinav_adi, tarih, yayin_evi, sinav_turu) VALUES (?, ?, ?, ?)", (fix_tr_chars(sinav_adi), str(sinav_tarihi), fix_tr_chars(yayin_evi), sinav_turu))
                 sinav_id = cursor.lastrowid
                 
                 if excel_file.name.endswith('.csv'):
@@ -724,8 +746,9 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                 
                 for _, row in df.iterrows():
                     ogr_adi = str(get_col_val(row, ['ad soyad', 'ogrenci adi', 'ad', 'isim'], default=""))
+                    ogr_adi = fix_tr_chars(ogr_adi)
                     ogr_norm = normalize_name(ogr_adi)
-                    sinif = str(get_col_val(row, ['sinif', 'sınıf'], default=""))
+                    sinif = fix_tr_chars(str(get_col_val(row, ['sinif', 'sınıf'], default="")))
                     
                     if ogr_norm:
                         cursor.execute('''
@@ -768,20 +791,23 @@ if secim == "📥 Sınav Yükle & Veri Aktarımı" and st.session_state['role'] 
                     try:
                         import pypdf
                         for pdf in pdf_files:
-                            pdf_name = pdf.name.replace(".pdf", "")
+                            pdf_name = fix_tr_chars(pdf.name.replace(".pdf", ""))
                             pdf_norm_name = normalize_name(pdf_name)
                             
                             reader = pypdf.PdfReader(pdf)
                             full_text = ""
                             for page in reader.pages:
-                                full_text += page.extract_text() + "\n"
+                                text_extracted = page.extract_text()
+                                if text_extracted:
+                                    full_text += text_extracted + "\n"
                             
+                            full_text = fix_tr_chars(full_text)
                             lines = full_text.split('\n')
                             for line in lines:
                                 if ":" in line:
                                     parts = line.split(":")
-                                    konu_temiz = parts[0].strip()
-                                    sorular = parts[1].strip() if len(parts) > 1 else ""
+                                    konu_temiz = fix_tr_chars(parts[0].strip())
+                                    sorular = fix_tr_chars(parts[1].strip()) if len(parts) > 1 else ""
                                     tespit_edilen_ders = detect_subject_from_topic(konu_temiz)
                                     
                                     cursor.execute('''
@@ -806,7 +832,7 @@ elif secim in ["📊 Öğrenci Karneleri & Analiz", "🎓 Gelişim & Analiz Karn
     if st.session_state['role'] in ['admin', 'ogretmen']:
         df_ogrenciler = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm, ogrenci_adi FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC", conn)
         if not df_ogrenciler.empty:
-            ogr_dict = dict(zip(df_ogrenciler['ogrenci_adi_norm'], df_ogrenciler['ogrenci_adi']))
+            ogr_dict = dict(zip(df_ogrenciler['ogrenci_adi_norm'], df_ogrenciler['ogrenci_adi'].apply(fix_tr_chars)))
             secilen_norm = st.selectbox("Analiz Edilecek Öğrenciyi Seçin:", list(ogr_dict.keys()), format_func=lambda x: ogr_dict[x])
             secilen_ogr_adi = ogr_dict[secilen_norm]
             render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True)
@@ -834,7 +860,7 @@ elif secim in ["📚 Ödev & Soru Bankası Takibi", "📚 Ödevlerim & Ödev Dur
             if st.button("🚀 Ödevi Yayınla", type="primary"):
                 if konu_kaynak.strip():
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO odevler (sinif, ders, konu_kaynak, son_tarih, eklenme_tarihi) VALUES (?, ?, ?, ?, DATE('now'))", (sinif_secim, ders_secim, konu_kaynak, str(son_tarih)))
+                    cursor.execute("INSERT INTO odevler (sinif, ders, konu_kaynak, son_tarih, eklenme_tarihi) VALUES (?, ?, ?, ?, DATE('now'))", (sinif_secim, ders_secim, fix_tr_chars(konu_kaynak), str(son_tarih)))
                     odev_id = cursor.lastrowid
                     df_ogrs = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm FROM ogrenci_sonuclari", conn)
                     for _, row in df_ogrs.iterrows():
@@ -847,11 +873,12 @@ elif secim in ["📚 Ödev & Soru Bankası Takibi", "📚 Ödevlerim & Ödev Dur
                 secilen_odev_id = st.selectbox("İncelenecek Ödev:", df_odevler['odev_id'].tolist(), format_func=lambda x: f"ID:{x} - {df_odevler[df_odevler['odev_id']==x]['ders'].values[0]} ({df_odevler[df_odevler['odev_id']==x]['konu_kaynak'].values[0]})")
                 df_takip = pd.read_sql_query("SELECT ot.id, os.ogrenci_adi, os.sinif, ot.durum, ot.aciklama FROM odev_takip ot JOIN ogrenci_sonuclari os ON ot.ogrenci_adi_norm = os.ogrenci_adi_norm WHERE ot.odev_id = ? GROUP BY ot.ogrenci_adi_norm", conn, params=(secilen_odev_id,))
                 if not df_takip.empty:
+                    df_takip['ogrenci_adi'] = df_takip['ogrenci_adi'].apply(fix_tr_chars)
                     edited_df = st.data_editor(df_takip, column_config={"durum": st.column_config.SelectboxColumn("Ödev Durumu", options=["Bekliyor", "Tamamlandı", "Eksik Yapıldı", "Yapılmadı"], required=True)}, disabled=["id", "ogrenci_adi", "sinif"], use_container_width=True)
                     if st.button("💾 Kaydet"):
                         cursor = conn.cursor()
                         for _, row in edited_df.iterrows():
-                            cursor.execute("UPDATE odev_takip SET durum = ?, aciklama = ? WHERE id = ?", (row['durum'], row['aciklama'], row['id']))
+                            cursor.execute("UPDATE odev_takip SET durum = ?, aciklama = ? WHERE id = ?", (row['durum'], fix_tr_chars(row['aciklama']), row['id']))
                         conn.commit()
                         st.success("Güncellendi!")
     else:
@@ -881,7 +908,7 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
     if st.session_state['role'] in ['admin', 'ogretmen']:
         df_ogr = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm, ogrenci_adi FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC", conn)
         if not df_ogr.empty:
-            ogr_dict = dict(zip(df_ogr['ogrenci_adi_norm'], df_ogr['ogrenci_adi']))
+            ogr_dict = dict(zip(df_ogr['ogrenci_adi_norm'], df_ogr['ogrenci_adi'].apply(fix_tr_chars)))
             secilen_norm = st.selectbox("Öğrenci Seçin:", list(ogr_dict.keys()), format_func=lambda x: ogr_dict[x])
             hedef_mevcut = get_ogrenci_hedef(secilen_norm)
             with st.form("hedef_form"):
@@ -891,7 +918,7 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
                 hedef_puan = st.number_input("Hedef Puan:", value=float(hedef_mevcut['puan']) if hedef_mevcut else 350.0)
                 if st.form_submit_button("🎯 Kaydet"):
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO ogrenci_hedefleri (ogrenci_adi_norm, hedef_bolum, hedef_net, hedef_puan, alan_tercihi) VALUES (?, ?, ?, ?, ?) ON CONFLICT(ogrenci_adi_norm) DO UPDATE SET hedef_bolum=excluded.hedef_bolum, hedef_net=excluded.hedef_net, hedef_puan=excluded.hedef_puan, alan_tercihi=excluded.alan_tercihi", (secilen_norm, hedef_bolum, hedef_net, hedef_puan, alan_tercihi))
+                    cursor.execute("INSERT INTO ogrenci_hedefleri (ogrenci_adi_norm, hedef_bolum, hedef_net, hedef_puan, alan_tercihi) VALUES (?, ?, ?, ?, ?) ON CONFLICT(ogrenci_adi_norm) DO UPDATE SET hedef_bolum=excluded.hedef_bolum, hedef_net=excluded.hedef_net, hedef_puan=excluded.hedef_puan, alan_tercihi=excluded.alan_tercihi", (secilen_norm, fix_tr_chars(hedef_bolum), hedef_net, hedef_puan, alan_tercihi))
                     conn.commit()
                     st.success("Kaydedildi!")
     else:
@@ -904,8 +931,10 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler":
     conn = sqlite3.connect("sinav_takip.db")
     df_sinavlar = pd.read_sql_query("SELECT * FROM sinavlar ORDER BY sinav_id DESC", conn)
     if not df_sinavlar.empty:
-        secilen_sinav_id = st.selectbox("Sınav Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0])
+        secilen_sinav_id = st.selectbox("Sınav Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: fix_tr_chars(df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0]))
         df_derece = pd.read_sql_query("SELECT kurum_sirasi as 'Sıra', ogrenci_adi as 'Öğrenci', sinif as 'Sınıf', toplam_net as 'TYT Toplam', ayt_toplam_net as 'AYT Toplam' FROM ogrenci_sonuclari WHERE sinav_id = ? ORDER BY kurum_sirasi ASC", conn, params=(secilen_sinav_id,))
+        if not df_derece.empty:
+            df_derece['Öğrenci'] = df_derece['Öğrenci'].apply(fix_tr_chars)
         st.dataframe(df_derece, use_container_width=True)
     conn.close()
 
@@ -920,6 +949,9 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi":
     st.title("🔥 Konu Analizi")
     conn = sqlite3.connect("sinav_takip.db")
     df_eksik = pd.read_sql_query("SELECT ders as 'Ders', konu_kazanim as 'Konu', COUNT(*) as 'Yanlış Sayısı' FROM ogrenci_eksikleri GROUP BY konu_kazanim ORDER BY [Yanlış Sayısı] DESC LIMIT 15", conn)
+    if not df_eksik.empty:
+        df_eksik['Ders'] = df_eksik['Ders'].apply(fix_tr_chars)
+        df_eksik['Konu'] = df_eksik['Konu'].apply(fix_tr_chars)
     st.dataframe(df_eksik, use_container_width=True) if not df_eksik.empty else st.info("Veri yok.")
     conn.close()
 
@@ -933,11 +965,11 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
     df_ogrs = pd.read_sql_query("SELECT DISTINCT ogrenci_adi_norm, ogrenci_adi FROM ogrenci_sonuclari", conn)
     ogr_norm = None
     if not df_ogrs.empty and rol in ['ogrenci', 'veli']:
-        ogr_dict = dict(zip(df_ogrs['ogrenci_adi_norm'], df_ogrs['ogrenci_adi']))
+        ogr_dict = dict(zip(df_ogrs['ogrenci_adi_norm'], df_ogrs['ogrenci_adi'].apply(fix_tr_chars)))
         ogr_norm = st.selectbox("İlişkilendirilecek Öğrenci:", list(ogr_dict.keys()), format_func=lambda x: ogr_dict[x])
     if st.button("➕ Oluştur"):
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, ?, ?, ?, ?)", (k_adi, sifre, rol, ogr_norm, telefon))
+        cursor.execute("INSERT INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, ?, ?, ?, ?)", (fix_tr_chars(k_adi), sifre, rol, ogr_norm, telefon))
         conn.commit()
         st.success("Hesap oluşturuldu.")
     conn.close()
@@ -954,7 +986,7 @@ elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'a
         if uploaded_logo:
             b64_str = base64.b64encode(uploaded_logo.read()).decode('utf-8')
         cursor.execute("DELETE FROM kurum_ayarlari")
-        cursor.execute("INSERT INTO kurum_ayarlari (id, kurum_adi, logo_base64) VALUES (1, ?, ?)", (yeni_kurum_adi, b64_str))
+        cursor.execute("INSERT INTO kurum_ayarlari (id, kurum_adi, logo_base64) VALUES (1, ?, ?)", (fix_tr_chars(yeni_kurum_adi), b64_str))
         conn.commit()
         st.success("Ayarlar güncellendi.")
     conn.close()
@@ -965,7 +997,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
     df_sinavlar = pd.read_sql_query("SELECT * FROM sinavlar ORDER BY sinav_id DESC", conn)
     if not df_sinavlar.empty:
         st.dataframe(df_sinavlar, use_container_width=True)
-        silinecek_id = st.selectbox("Silinecek Sınavı Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: f"ID: {x} - {df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0]}")
+        silinecek_id = st.selectbox("Silinecek Sınavı Seçin:", df_sinavlar['sinav_id'].tolist(), format_func=lambda x: f"ID: {x} - {fix_tr_chars(df_sinavlar[df_sinavlar['sinav_id']==x]['sinav_adi'].values[0])}")
         if st.button("🔴 Kalıcı Olarak Sil", type="primary"):
             cursor = conn.cursor()
             cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (silinecek_id,))
