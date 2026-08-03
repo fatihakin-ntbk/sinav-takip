@@ -590,7 +590,7 @@ with st.sidebar.expander("🔒 Şifremi Değiştir"):
 
 st.sidebar.markdown("---")
 
-# --- ROL BAZLI MENÜ ---
+# --- ROL BAZLI MENÜ DÜZENLEMESİ ---
 if st.session_state['role'] == 'admin':
     menu_options = [
         "📤 Yeni Sınav Yükle", 
@@ -620,8 +620,10 @@ else:
 
 secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
 
+# --- SAYFA SAYFA YÖNLENDİRMELER (IF - ELIF - ELSE ZİNCİRİ) ---
+
 # --- 1. MENÜ: YENİ SINAV YÜKLE ---
-elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
+if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     st.title("📤 Yeni Deneme Sınavı Yükleme Paneli")
     col1, col2 = st.columns(2)
     with col1:
