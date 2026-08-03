@@ -97,7 +97,7 @@ def init_db():
         hedef_puan REAL
     )''')
 
-    # Ödevler Genel Tablosu (YENİ)
+    # Ödevler Genel Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS odevler (
         odev_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +108,7 @@ def init_db():
         eklenme_tarihi TEXT
     )''')
 
-    # Ödev Takip / Durum Tablosu (YENİ)
+    # Ödev Takip / Durum Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS odev_takip (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -726,7 +726,7 @@ elif secim == "📊 Öğrenci Karneleri & Analiz" and st.session_state['role'] i
     else:
         st.warning("Bu kriterlere uygun öğrenci bulunamadı.")
 
-# --- 3. MENÜ: ÖDEV & SORU BANKASI TAKİBİ (YENİ MODÜL - ADMİN & ÖĞRETMEN) ---
+# --- 3. MENÜ: ÖDEV & SORU BANKASI TAKİBİ (ADMİN & ÖĞRETMEN) ---
 elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("📚 Ödev & Soru Bankası Takip Modülü")
 
@@ -909,7 +909,6 @@ elif secim == "📚 Ödevlerim & Ödev Durumu" and st.session_state['role'] in [
         df_my_odev = pd.read_sql_query(q_my_odev, conn, params=(secilen_norm,))
 
         if not df_my_odev.empty:
-            # Özet Metrikler
             yapti_s = len(df_my_odev[df_my_odev['Durum'] == 'Yaptı'])
             eksik_s = len(df_my_odev[df_my_odev['Durum'] == 'Eksik Yaptı'])
             yapmadi_s = len(df_my_odev[df_my_odev['Durum'] == 'Yapmadı'])
@@ -924,7 +923,6 @@ elif secim == "📚 Ödevlerim & Ödev Durumu" and st.session_state['role'] in [
             st.markdown("---")
             st.subheader("📋 Ödev Listesi ve Detayları")
 
-            # Renklendirme fonksiyonu
             def highlight_durum(val):
                 color = ''
                 if val == 'Yaptı':
