@@ -2109,7 +2109,8 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
             conn.commit()
             st.success("✅ Sınav silindi.")
             st.rerun()
-    conn.close()ta oluştu: {e}")
+    
+    conn.close()
     else:
       st.warning("Lütfen bir Excel dosyası seçin.")
 
