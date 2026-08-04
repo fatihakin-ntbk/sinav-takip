@@ -28,6 +28,17 @@ def init_db():
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
     
+    # Ana Öğrenci Listesi Tablosu
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ogrenciler (
+        ogrenci_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        okul_no TEXT UNIQUE,
+        ad_soyad TEXT,
+        ad_soyad_norm TEXT UNIQUE,
+        sinif TEXT,
+        veli_telefon TEXT
+    )''')
+
     # Sınavlar Tablosu
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS sinavlar (
@@ -593,6 +604,7 @@ st.sidebar.markdown("---")
 # --- ROL BAZLI MENÜ DÜZENLEMESİ ---
 if st.session_state['role'] == 'admin':
     menu_options = [
+        "📂 Sene Başı Öğrenci Listesi Yükle",
         "📤 Yeni Sınav Yükle", 
         "📊 Öğrenci Karneleri & Analiz", 
         "📚 Ödev & Soru Bankası Takibi",
@@ -622,8 +634,109 @@ secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
 
 # --- SAYFA SAYFA YÖNLENDİRMELER (IF - ELIF - ELSE ZİNCİRİ) ---
 
+# --- 0. MENÜ: SENE BAŞI ÖĞRENCİ LİSTESİ YÜKLE (ADMİN) ---
+if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state['role'] == 'admin':
+    st.title("📂 Sene Başı Öğrenci Ana Listesi Yükleme Paneli")
+    st.info("💡 **Önemli:** Sene başında tüm öğrencilerinizi içeren tek bir Excel dosyası yükleyin. Sistem öğrenci ve veli hesaplarını otomatik oluşturacaktır. Excel dosyanızda **Okul No**, **Adı Soyadı**, **Sınıfı** ve **Veli Telefon** sütunlarının bulunması tavsiye edilir.")
+
+    list_file = st.file_uploader("Öğrenci Ana Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
+
+    if st.button("🚀 Ana Öğrenci Listesini Yükle ve Hesapları Oluştur", type="primary"):
+        if list_file:
+            try:
+                conn = sqlite3.connect("sinav_takip.db")
+                cursor = conn.cursor()
+
+                df_raw = pd.read_excel(list_file)
+
+                # Başlık Tespiti
+                header_row_idx = None
+                for idx, row in df_raw.iterrows():
+                    row_str_values = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                    if any("AD" in val or "OGRENCI" in val or "ISIM" in val for val in row_str_values):
+                        header_row_idx = idx
+                        break
+
+                if header_row_idx is not None:
+                    headers = [str(c).strip() if pd.notna(c) else '' for c in df_raw.iloc[header_row_idx].values]
+                    df = df_raw.iloc[header_row_idx + 1:].copy()
+                    df.columns = headers
+                else:
+                    df = df_raw.copy()
+
+                def get_val(row, possible_names, default=""):
+                    for name in possible_names:
+                        for col in row.index:
+                            if name.upper() in str(col).strip().upper():
+                                val = row[col]
+                                if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                    return str(val).strip()
+                    return default
+
+                eklenen_sayisi = 0
+                guncellenen_sayisi = 0
+
+                for _, row in df.iterrows():
+                    raw_name = get_val(row, ['Adı Soyadı', 'Ad Soyad', 'Öğrenci', 'Ogrenci', 'İsim', 'Isim'])
+                    if not raw_name or raw_name.upper() in ['NAN', 'NONE', '', 'ÖĞRENCİ']:
+                        continue
+
+                    okul_no = get_val(row, ['Okul No', 'Numara', 'No', 'Ogrenci No'])
+                    sinif = get_val(row, ['Sınıf', 'Sinif', 'Grup'])
+                    veli_tel = get_val(row, ['Veli Telefon', 'Telefon', 'Tel', 'GSM'])
+                    
+                    norm_name = tr_normalize(raw_name)
+
+                    # Öğrenciler tablosuna ekle / güncelle
+                    cursor.execute('''
+                    INSERT INTO ogrenciler (okul_no, ad_soyad, ad_soyad_norm, sinif, veli_telefon)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(ad_soyad_norm) DO UPDATE SET
+                        okul_no=COALESCE(NULLIF(excluded.okul_no, ''), ogrenciler.okul_no),
+                        sinif=COALESCE(NULLIF(excluded.sinif, ''), ogrenciler.sinif),
+                        veli_telefon=COALESCE(NULLIF(excluded.veli_telefon, ''), ogrenciler.veli_telefon)
+                    ''', (okul_no, raw_name, norm_name, sinif, veli_tel))
+
+                    # Otomatik Hesap Tanımlama (Varsayılan Şifre: 123456)
+                    ogr_username = okul_no if okul_no else norm_name.lower().replace(" ", "")
+                    veli_username = f"v_{ogr_username}"
+
+                    # Öğrenci Hesabı
+                    cursor.execute('''
+                    INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon)
+                    VALUES (?, '123456', 'ogrenci', ?, ?)
+                    ''', (ogr_username, norm_name, ''))
+
+                    # Veli Hesabı
+                    cursor.execute('''
+                    INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon)
+                    VALUES (?, '123456', 'veli', ?, ?)
+                    ''', (veli_username, norm_name, veli_tel))
+
+                    eklenen_sayisi += 1
+
+                conn.commit()
+                conn.close()
+                st.success(f"🎉 Ana liste başarıyla işlendi! Toplam **{eklenen_sayisi}** öğrenci sisteme tanımlandı, öğrenci ve veli giriş hesapları otomatik oluşturuldu.")
+
+            except Exception as e:
+                st.error(f"Listeyi yüklerken hata oluştu: {e}")
+        else:
+            st.warning("Lütfen bir Excel dosyası seçin.")
+
+    st.markdown("---")
+    st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
+    conn = sqlite3.connect("sinav_takip.db")
+    df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
+    conn.close()
+
+    if not df_ana_liste.empty:
+        st.dataframe(df_ana_liste, use_container_width=True)
+    else:
+        st.info("Henüz ana öğrenci listesi yüklenmemiş.")
+
 # --- 1. MENÜ: YENİ SINAV YÜKLE ---
-if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
+elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     st.title("📤 Yeni Deneme Sınavı Yükleme Paneli")
     col1, col2 = st.columns(2)
     with col1:
@@ -661,7 +774,6 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                 else:
                     df = df_raw.copy()
 
-                # Sütun isimlerini esnek arama fonksiyonu
                 def get_val(row, possible_names, default=0.0):
                     for name in possible_names:
                         for col in row.index:
@@ -671,6 +783,12 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                                     return val
                     return default
 
+                # Ana öğrenci listesini çek (Eşleştirme İçin)
+                cursor.execute("SELECT okul_no, ad_soyad, ad_soyad_norm, sinif FROM ogrenciler")
+                ana_ogrenciler = cursor.fetchall()
+                dict_by_no = {str(o[0]): (o[1], o[2], o[3]) for o in ana_ogrenciler if o[0]}
+                dict_by_norm = {o[2]: (o[1], o[2], o[3]) for o in ana_ogrenciler}
+
                 for _, row in df.iterrows():
                     raw_name = get_val(row, ['Öğrenci', 'Ogrenci', 'Adı Soyadı', 'Ad Soyad'], default=None)
                     if not raw_name or str(raw_name).strip().upper() in ['NAN', 'NONE', '', 'ÖĞRENCİ']:
@@ -678,9 +796,20 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                     
                     raw_name = str(raw_name).strip()
                     norm_name = tr_normalize(raw_name)
+                    numara = str(get_val(row, ['Numara', 'No'], default='')).strip()
 
-                    numara = str(get_val(row, ['Numara', 'No'], default=''))
+                    # Ana Liste ile Eşleştirme Yapılıyor
+                    matched_name = raw_name
+                    matched_norm = norm_name
                     grup = str(get_val(row, ['Grup', 'Sınıf', 'Sinif'], default=''))
+
+                    if numara in dict_by_no:
+                        matched_name, matched_norm, matched_sinif = dict_by_no[numara]
+                        if matched_sinif: grup = matched_sinif
+                    elif norm_name in dict_by_norm:
+                        matched_name, matched_norm, matched_sinif = dict_by_norm[norm_name]
+                        if matched_sinif: grup = matched_sinif
+
                     puan = float(get_val(row, ['YKS TYT', 'TYT Puan'], default=0.0))
                     sira = int(float(get_val(row, ['YKS TYT K.B.', 'K.B.', 'Kurum Sıra'], default=0)))
                     turkce = float(get_val(row, ['Tür 05.N', 'Türkçe Net', 'Tür Net'], default=0.0))
@@ -693,7 +822,7 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                     INSERT INTO ogrenci_sonuclari 
                     (sinav_id, ogrenci_no, ogrenci_adi, ogrenci_adi_norm, sinif, tyt_puan, kurum_sirasi, turkce_net, sosyal_net, matematik_net, fen_net, toplam_net)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (sinav_id, numara, raw_name, norm_name, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
+                    ''', (sinav_id, numara, matched_name, matched_norm, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
 
                 # --- PDF ANALİZİ ---
                 reader = pypdf.PdfReader(pdf_file)
@@ -710,6 +839,10 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         pdf_name = header_match.group(3).strip().split('\n')[0]
                         pdf_norm_name = tr_normalize(pdf_name)
                         
+                        # PDF İle Ana Liste Eşleştirme
+                        if pdf_norm_name in dict_by_norm:
+                            pdf_name, pdf_norm_name, _ = dict_by_norm[pdf_norm_name]
+
                         matches = re.findall(r'\d+\s*-\s*([^(]+)\(([^)]+)\)', block)
                         for konu, sorular in matches:
                             konu_temiz = konu.strip()
@@ -723,7 +856,7 @@ if secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                 conn.commit()
                 conn.close()
-                st.success(f"🎉 '{sinav_adi}' başarıyla yüklendi!")
+                st.success(f"🎉 '{sinav_adi}' başarıyla yüklendi ve ana liste ile eşleştirildi!")
 
             except Exception as e:
                 st.error(f"Hata oluştu: {e}")
@@ -768,7 +901,7 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
     with tab_o1:
         st.subheader("📝 Yeni Sınıf Ödevi Oluştur")
         
-        cursor.execute("SELECT DISTINCT sinif FROM ogrenci_sonuclari ORDER BY sinif ASC")
+        cursor.execute("SELECT DISTINCT sinif FROM ogrenciler ORDER BY sinif ASC")
         sinif_list = [s[0] for s in cursor.fetchall() if s[0]]
 
         if sinif_list:
@@ -789,8 +922,7 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
                                        (o_sinif, o_ders, o_kaynak.strip(), str(o_tarih)))
                         new_odev_id = cursor.lastrowid
 
-                        # Sınıftaki tüm öğrencilere varsayılan 'Bekliyor' durumunu ekle
-                        cursor.execute("SELECT DISTINCT ogrenci_adi_norm FROM ogrenci_sonuclari WHERE sinif = ?", (o_sinif,))
+                        cursor.execute("SELECT DISTINCT ad_soyad_norm FROM ogrenciler WHERE sinif = ?", (o_sinif,))
                         sinif_ogrencileri = cursor.fetchall()
 
                         for (o_norm,) in sinif_ogrencileri:
@@ -802,7 +934,7 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
                     else:
                         st.warning("Lütfen ödev/kaynak detayını giriniz.")
         else:
-            st.warning("Henüz sistemde sınıf kaydı bulunmuyor.")
+            st.warning("Henüz sistemde sınıf kaydı bulunmuyor. Önce 'Sene Başı Öğrenci Listesi' yükleyiniz.")
 
     # --- TAB 2: SINIF ÖDEV KONTROLÜ ---
     with tab_o2:
@@ -816,15 +948,12 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
             secilen_odev_label = st.selectbox("Kontrol Edilecek Ödevi Seçin:", list(odev_dict.keys()))
             secilen_odev_id = odev_dict[secilen_odev_label]
 
-            # Ödeve ait öğrenci durumlarını getir
             q_durum = '''
-            SELECT os.ogrenci_adi, os.ogrenci_adi_norm, ot.durum, ot.aciklama, ot.id as takip_id
+            SELECT o.ad_soyad as ogrenci_adi, o.ad_soyad_norm as ogrenci_adi_norm, ot.durum, ot.aciklama, ot.id as takip_id
             FROM odev_takip ot
-            JOIN ogrenci_sonuclari os ON ot.ogrenci_adi_norm = os.ogrenci_adi_norm
-            JOIN odevler o ON ot.odev_id = o.odev_id
-            WHERE ot.odev_id = ? AND os.sinif = o.sinif
-            GROUP BY os.ogrenci_adi_norm
-            ORDER BY os.ogrenci_adi ASC
+            JOIN ogrenciler o ON ot.ogrenci_adi_norm = o.ad_soyad_norm
+            WHERE ot.odev_id = ?
+            ORDER BY o.ad_soyad ASC
             '''
             df_kontrol = pd.read_sql_query(q_durum, conn, params=(secilen_odev_id,))
 
@@ -903,11 +1032,11 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
             with c_s2:
                 st.subheader("🔴 En Çok Ödev Aksaması Olan Öğrenciler")
                 q_top_unpaid = '''
-                SELECT os.ogrenci_adi as 'Öğrenci', os.sinif as 'Sınıf', COUNT(*) as 'Yapılmayan Ödev Sayısı'
+                SELECT o.ad_soyad as 'Öğrenci', o.sinif as 'Sınıf', COUNT(*) as 'Yapılmayan Ödev Sayısı'
                 FROM odev_takip ot
-                JOIN ogrenci_sonuclari os ON ot.ogrenci_adi_norm = os.ogrenci_adi_norm
+                JOIN ogrenciler o ON ot.ogrenci_adi_norm = o.ad_soyad_norm
                 WHERE ot.durum = 'Yapmadı'
-                GROUP BY os.ogrenci_adi_norm
+                GROUP BY o.ad_soyad_norm
                 ORDER BY COUNT(*) DESC LIMIT 10
                 '''
                 df_unpaid = pd.read_sql_query(q_top_unpaid, conn)
@@ -980,7 +1109,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
     kurum_adi, _ = get_kurum_bilgileri()
 
     with tab1:
-        cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+        cursor.execute("SELECT ad_soyad, ad_soyad_norm FROM ogrenciler ORDER BY ad_soyad ASC")
         ogrenciler = cursor.fetchall()
         
         if ogrenciler:
@@ -998,7 +1127,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
             cursor.execute(query, (secilen_norm,))
             last_exam = cursor.fetchone()
             
-            cursor.execute("SELECT telefon FROM kullanicilar WHERE ogrenci_adi_norm = ? AND rol = 'veli' LIMIT 1", (secilen_norm,))
+            cursor.execute("SELECT veli_telefon FROM ogrenciler WHERE ad_soyad_norm = ? LIMIT 1", (secilen_norm,))
             tel_row = cursor.fetchone()
             default_tel = tel_row[0] if tel_row and tel_row[0] else ""
             
@@ -1044,7 +1173,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
         cursor.execute("SELECT sinav_adi FROM sinavlar ORDER BY tarih DESC")
         sinav_list = [s[0] for s in cursor.fetchall()]
         
-        cursor.execute("SELECT DISTINCT sinif FROM ogrenci_sonuclari ORDER BY sinif ASC")
+        cursor.execute("SELECT DISTINCT sinif FROM ogrenciler ORDER BY sinif ASC")
         sinif_list = ["Tüm Sınıflar"] + [s[0] for s in cursor.fetchall() if s[0]]
 
         if sinav_list:
@@ -1056,20 +1185,20 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
 
             if toplu_sinif == "Tüm Sınıflar":
                 q_toplu = '''
-                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, k.telefon
+                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, o.veli_telefon as telefon
                 FROM ogrenci_sonuclari os
                 JOIN sinavlar s ON os.sinav_id = s.sinav_id
-                LEFT JOIN kullanicilar k ON (os.ogrenci_adi_norm = k.ogrenci_adi_norm AND k.rol = 'veli')
+                LEFT JOIN ogrenciler o ON os.ogrenci_adi_norm = o.ad_soyad_norm
                 WHERE s.sinav_adi = ?
                 ORDER BY os.ogrenci_adi ASC
                 '''
                 df_toplu = pd.read_sql_query(q_toplu, conn, params=(toplu_sinav,))
             else:
                 q_toplu = '''
-                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, k.telefon
+                SELECT os.ogrenci_adi, os.ogrenci_adi_norm, os.sinif, os.toplam_net, os.tyt_puan, os.kurum_sirasi, o.veli_telefon as telefon
                 FROM ogrenci_sonuclari os
                 JOIN sinavlar s ON os.sinav_id = s.sinav_id
-                LEFT JOIN kullanicilar k ON (os.ogrenci_adi_norm = k.ogrenci_adi_norm AND k.rol = 'veli')
+                LEFT JOIN ogrenciler o ON os.ogrenci_adi_norm = o.ad_soyad_norm
                 WHERE s.sinav_adi = ? AND os.sinif = ?
                 ORDER BY os.ogrenci_adi ASC
                 '''
@@ -1129,11 +1258,11 @@ elif secim in ["🎯 Hedef Belirleme & Takip", "🎯 Üniversite / Hedefim"]:
 
     if st.session_state['role'] in ['ogrenci', 'veli']:
         secilen_norm = st.session_state['user_info']['norm_adi']
-        cursor.execute("SELECT ogrenci_adi FROM ogrenci_sonuclari WHERE ogrenci_adi_norm = ? LIMIT 1", (secilen_norm,))
+        cursor.execute("SELECT ad_soyad FROM ogrenciler WHERE ad_soyad_norm = ? LIMIT 1", (secilen_norm,))
         row = cursor.fetchone()
         secilen_ogr_adi = row[0] if row else "Öğrenci"
     else:
-        cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+        cursor.execute("SELECT DISTINCT ad_soyad, ad_soyad_norm FROM ogrenciler ORDER BY ad_soyad ASC")
         ogrenciler = cursor.fetchall()
         if ogrenciler:
             ogr_dict = {f"{o[0]}": o[1] for o in ogrenciler}
@@ -1205,7 +1334,7 @@ elif secim == "🎓 Gelişim & Analiz Karnem" and st.session_state['role'] in ['
     if secilen_norm:
         conn = sqlite3.connect("sinav_takip.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT ogrenci_adi FROM ogrenci_sonuclari WHERE ogrenci_adi_norm = ? LIMIT 1", (secilen_norm,))
+        cursor.execute("SELECT ad_soyad FROM ogrenciler WHERE ad_soyad_norm = ? LIMIT 1", (secilen_norm,))
         row = cursor.fetchone()
         conn.close()
         ogr_display_name = row[0] if row else "Öğrenci"
@@ -1437,11 +1566,11 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in 
 
 # --- 11. MENÜ: ÖĞRENCİ & VELİ HESAP YÖNETİMİ ---
 elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
-    st.title("👥 Öğrenci & Veli Hesap Tanımlama Paneli")
+    st.title("👥 Öğrenci & Veli Hesap Yönetim Paneli")
 
     conn = sqlite3.connect("sinav_takip.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT ogrenci_adi, ogrenci_adi_norm FROM ogrenci_sonuclari ORDER BY ogrenci_adi ASC")
+    cursor.execute("SELECT DISTINCT ad_soyad, ad_soyad_norm FROM ogrenciler ORDER BY ad_soyad ASC")
     ogrenciler = cursor.fetchall()
 
     if ogrenciler:
@@ -1510,7 +1639,7 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
             st.rerun()
 
     else:
-        st.warning("Sistemde henüz kayıtlı öğrenci verisi yok. Önce bir sınav yüklemelisiniz.")
+        st.warning("Sistemde henüz kayıtlı öğrenci verisi yok. Önce 'Sene Başı Öğrenci Listesi' yüklemelisiniz.")
     
     conn.close()
 
