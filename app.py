@@ -639,6 +639,33 @@ if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state['ro
     st.title("📂 Sene Başı Öğrenci Ana Listesi Yükleme Paneli")
     st.info("💡 **Önemli:** Sene başında tüm öğrencilerinizi içeren tek bir Excel dosyası yükleyin. Sistem öğrenci ve veli hesaplarını otomatik oluşturacaktır. Excel dosyanızda **Okul No**, **Adı Soyadı**, **Sınıfı** ve **Veli Telefon** sütunlarının bulunması tavsiye edilir.")
 
+    # HAZIR EXCEL ŞABLONU İNDİRME BUTONU
+    sablon_veri = {
+        'Okul No': [917],
+        'Adı Soyadı': ['ASLI ÇAĞLAR'],
+        'öğrenci T.C. kimlik no': ['50383367498'],
+        'Sınıfı': ['9-A'],
+        'veli yakınlığı': ['Anne'],
+        'veli adı': ['AYSEL'],
+        'veli soyadı': ['ÇAĞLAR'],
+        'Veli Telefon': ['5056344447'],
+        'veli T.C. Kimlik no': ['50383367498']
+    }
+    df_sablon = pd.DataFrame(sablon_veri)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_sablon.to_excel(writer, index=False, sheet_name='Ogrenci_Listesi')
+
+    st.download_button(
+        label="📥 Örnek Excel Şablonunu İndir",
+        data=buffer.getvalue(),
+        file_name="Ogrenci_Ana_Listesi_Sablonu.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Hata almamak için bu şablonu indirip verilerinizi yapıştırabilirsiniz."
+    )
+
+    st.markdown("---")
+
     list_file = st.file_uploader("Öğrenci Ana Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
 
     if st.button("🚀 Ana Öğrenci Listesini Yükle ve Hesapları Oluştur", type="primary"):
@@ -674,7 +701,6 @@ if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state['ro
                     return default
 
                 eklenen_sayisi = 0
-                guncellenen_sayisi = 0
 
                 for _, row in df.iterrows():
                     raw_name = get_val(row, ['Adı Soyadı', 'Ad Soyad', 'Öğrenci', 'Ogrenci', 'İsim', 'Isim'])
