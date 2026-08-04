@@ -1094,7 +1094,8 @@ elif secim == "📚 Ödevlerim & Ödev Durumu" and st.session_state['role'] in [
             st.markdown("---")
             st.subheader("📋 Ödev Listesi ve Detayları")
 
-            def highlight_durum(val):
+            def highlight_durum(row):
+                val = row['Durum']
                 color = ''
                 if val == 'Yaptı':
                     color = 'background-color: #c6f6d5; color: #22543d; font-weight: bold;'
@@ -1102,9 +1103,9 @@ elif secim == "📚 Ödevlerim & Ödev Durumu" and st.session_state['role'] in [
                     color = 'background-color: #feebc8; color: #744210; font-weight: bold;'
                 elif val == 'Yapmadı':
                     color = 'background-color: #fed7d7; color: #742a2a; font-weight: bold;'
-                return color
+                return [color if col == 'Durum' else '' for col in row.index]
 
-            st.dataframe(df_my_odev.style.applymap(highlight_durum, subset=['Durum']), use_container_width=True)
+            st.dataframe(df_my_odev.style.apply(highlight_durum, axis=1), use_container_width=True)
         else:
             st.info("Henüz tarafınıza atanmış bir ödev bulunmuyor.")
         conn.close()
@@ -1704,7 +1705,7 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
     if sinavlar:
         sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
+        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(silinecek_label if 'silinecek_label' in locals() else sinav_dict.keys()))
         silinecek_id = sinav_dict[silinecek_label]
 
         if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
