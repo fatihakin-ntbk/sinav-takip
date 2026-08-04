@@ -2098,27 +2098,27 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
     sinavlar = cursor.fetchall()
 
     if sinavlar:
-        sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
-        silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
-        silinecek_id = sinav_dict[silinecek_label]
+    sinav_dict = {f"{s[1]} ({s[2]})": s[0] for s in sinavlar}
+    silinecek_label = st.selectbox("Silinecek Sınavı Seçin:", list(sinav_dict.keys()))
+    silinecek_id = sinav_dict[silinecek_label]
 
-        if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
-            cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (silinecek_id,))
-            cursor.execute("DELETE FROM ogrenci_eksikleri WHERE sinav_id = ?", (silinecek_id,))
-            cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (silinecek_id,))
-            conn.commit()
-            st.success("✅ Sınav silindi.")
-            st.rerun()
-    
-    conn.close()
-    else:
-      st.warning("Lütfen bir Excel dosyası seçin.")
+    if st.button("🔴 Seçilen Sınavı Sil", type="primary"):
+        cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (silinecek_id,))
+        cursor.execute("DELETE FROM ogrenci_eksikleri WHERE sinav_id = ?", (silinecek_id,))
+        cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (silinecek_id,))
+        conn.commit()
+        st.success("✅ Sınav silindi.")
+        st.rerun()
 
-    st.markdown("---")
-    st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
-    conn = sqlite3.connect("sinav_takip.db")
-    df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
     conn.close()
+else:
+    st.warning("Lütfen bir Excel dosyası seçin.")
+
+st.markdown("---")
+st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
+conn = sqlite3.connect("sinav_takip.db")
+df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
+conn.close()
 
     if not df_ana_liste.empty:
         st.dataframe(df_ana_liste, use_container_width=True)
