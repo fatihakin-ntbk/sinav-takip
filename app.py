@@ -1433,7 +1433,7 @@ if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True, key="cikis_
 st.sidebar.markdown("---")
 
 with st.sidebar.expander("🔒 Şifremi Değiştir"):
-    with st.form("change_password_form"):
+    with st.form("change_password_form_1436"):
         old_pass = st.text_input("Mevcut Şifre:", type="password")
         new_pass = st.text_input("Yeni Şifre:", type="password")
         confirm_pass = st.text_input("Yeni Şifre (Tekrar):", type="password")
