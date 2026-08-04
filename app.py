@@ -843,7 +843,6 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (sinav_id, numara, matched_name, matched_norm, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
 
-                    ```python
                     else: # AYT SINAVI
                         # ==========================================================
                         # AYT EXCEL SÜTUNLARI
@@ -992,7 +991,6 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                             ayt_toplam
                         ))
-```
 
 
                 # PDF Okuma
