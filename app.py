@@ -2112,22 +2112,18 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
 
         conn.close()
     else:
-        st.warning("Lütfen bir Excel dosyası seçin.")
+        st.warning("Henüz sistemde tanımlı bir sınav bulunmamaktadır.")
 
     st.markdown("---")
     st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
     conn = sqlite3.connect("sinav_takip.db")
     df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
     conn.close()
-conn = sqlite3.connect("sinav_takip.db")
-df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
-conn.close()
 
     if not df_ana_liste.empty:
         st.dataframe(df_ana_liste, use_container_width=True)
     else:
-        st.info("Henüz ana öğrenci listesi yüklenmemiş.")
-
+        st.info("Henüz sistemde kayıtlı öğrenci bulunmamaktadır.")
 # --- 1. MENÜ: YENİ SINAV YÜKLE ---
 elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     st.title("📤 Yeni Deneme Sınavı Yükleme Paneli")
