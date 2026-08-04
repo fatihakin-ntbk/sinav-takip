@@ -843,29 +843,157 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (sinav_id, numara, matched_name, matched_norm, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
 
+                    ```python
                     else: # AYT SINAVI
-                        ayt_mat = float(get_val(row, ['Mat Net', 'AYT Mat', 'Matematik Net'], default=0.0))
-                        ayt_fiz = float(get_val(row, ['Fizik Net', 'Fiz Net'], default=0.0))
-                        ayt_kim = float(get_val(row, ['Kimya Net', 'Kim Net'], default=0.0))
-                        ayt_bio = float(get_val(row, ['Biyoloji Net', 'Biyo Net'], default=0.0))
-                        ayt_edeb = float(get_val(row, ['Edebiyat Net', 'Edeb Net'], default=0.0))
-                        ayt_tar1 = float(get_val(row, ['Tarih-1 Net', 'Tar1 Net'], default=0.0))
-                        ayt_cog1 = float(get_val(row, ['Coğrafya-1 Net', 'Coğ1 Net'], default=0.0))
-                        ayt_toplam = float(get_val(row, ['AYT Toplam Net', 'AYT Net', 'Toplam Net'], default=0.0))
+                        # ==========================================================
+                        # AYT EXCEL SÜTUNLARI
+                        # Gerçek AYT Excel dosyasındaki sütun adlarına göre
+                        # hazırlanmıştır.
+                        # ==========================================================
 
-                        puan_say = float(get_val(row, ['AYT SAY', 'SAY Puan'], default=0.0))
-                        puan_ea = float(get_val(row, ['AYT EA', 'EA Puan'], default=0.0))
-                        puan_soz = float(get_val(row, ['AYT SÖZ', 'SÖZ Puan'], default=0.0))
+                        # AYT SAYISAL DERSLER
+                        ayt_mat = float(get_val(
+                            row,
+                            ['Mat 05.N', 'AYT Mat', 'Matematik Net'],
+                            default=0.0
+                        ))
+
+                        ayt_geo = float(get_val(
+                            row,
+                            ['Geo 05.N (1)', 'Geo 05.N', 'Geometri Net'],
+                            default=0.0
+                        ))
+
+                        ayt_fiz = float(get_val(
+                            row,
+                            ['Fiz 05.N (1)', 'Fiz 05.N', 'Fizik Net'],
+                            default=0.0
+                        ))
+
+                        ayt_kim = float(get_val(
+                            row,
+                            ['Kim 05.N (1)', 'Kim 05.N', 'Kimya Net'],
+                            default=0.0
+                        ))
+
+                        ayt_bio = float(get_val(
+                            row,
+                            ['Biy 05.N (1)', 'Biy 05.N', 'Biyoloji Net'],
+                            default=0.0
+                        ))
+
+                        # ==========================================================
+                        # AYT EŞİT AĞIRLIK / SÖZEL DERSLER
+                        # ==========================================================
+
+                        ayt_edeb = float(get_val(
+                            row,
+                            ['Tür 05.N (2)', 'Tür 05.N', 'Edebiyat Net', 'Edeb Net'],
+                            default=0.0
+                        ))
+
+                        ayt_tar1 = float(get_val(
+                            row,
+                            ['Tar 05.N (1)', 'Tarih-1 Net', 'Tar1 Net'],
+                            default=0.0
+                        ))
+
+                        ayt_cog1 = float(get_val(
+                            row,
+                            ['Coğ 05.N (1)', 'Coğ 05.N', 'Coğrafya-1 Net', 'Coğ1 Net'],
+                            default=0.0
+                        ))
+
+                        # ==========================================================
+                        # AYT TOPLAM NET
+                        #
+                        # Excel'de ayrıca tek bir "AYT Toplam Net" alanı olmadığı
+                        # için ana AYT derslerinin netlerini topluyoruz.
+                        #
+                        # Matematik + Geometri + Fizik + Kimya + Biyoloji
+                        # + Edebiyat + Tarih-1 + Coğrafya-1
+                        # ==========================================================
+
+                        ayt_toplam = (
+                            ayt_mat +
+                            ayt_geo +
+                            ayt_fiz +
+                            ayt_kim +
+                            ayt_bio +
+                            ayt_edeb +
+                            ayt_tar1 +
+                            ayt_cog1
+                        )
+
+                        # ==========================================================
+                        # AYT PUANLARI
+                        #
+                        # Bu Excel dosyasında doğrudan AYT SAY / EA / SÖZ puan
+                        # sütunları bulunmadığı için şimdilik 0 bırakıyoruz.
+                        #
+                        # Puan hesaplama aşamasında bunu ayrıca ele alacağız.
+                        # ==========================================================
+
+                        puan_say = 0.0
+                        puan_ea = 0.0
+                        puan_soz = 0.0
+
+                        # ==========================================================
+                        # VERİTABANINA KAYIT
+                        # ==========================================================
 
                         cursor.execute('''
-                        INSERT INTO ogrenci_sonuclari 
-                        (sinav_id, ogrenci_no, ogrenci_adi, ogrenci_adi_norm, sinif, kurum_sirasi, 
-                         ayt_mat_net, ayt_fizik_net, ayt_kimya_net, ayt_biyoloji_net, ayt_edebiyat_net, ayt_tarih1_net, ayt_cog1_net, ayt_toplam_net,
-                         ayt_say_puan, ayt_ea_puan, ayt_soz_puan, toplam_net)
+                        INSERT INTO ogrenci_sonuclari
+                        (
+                            sinav_id,
+                            ogrenci_no,
+                            ogrenci_adi,
+                            ogrenci_adi_norm,
+                            sinif,
+                            kurum_sirasi,
+
+                            ayt_mat_net,
+                            ayt_fizik_net,
+                            ayt_kimya_net,
+                            ayt_biyoloji_net,
+                            ayt_edebiyat_net,
+                            ayt_tarih1_net,
+                            ayt_cog1_net,
+                            ayt_toplam_net,
+
+                            ayt_say_puan,
+                            ayt_ea_puan,
+                            ayt_soz_puan,
+
+                            toplam_net
+                        )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (sinav_id, numara, matched_name, matched_norm, grup, sira, 
-                              ayt_mat, ayt_fiz, ayt_kim, ayt_bio, ayt_edeb, ayt_tar1, ayt_cog1, ayt_toplam,
-                              puan_say, puan_ea, puan_soz, ayt_toplam))
+                        ''',
+                        (
+                            sinav_id,
+                            numara,
+                            matched_name,
+                            matched_norm,
+                            grup,
+                            sira,
+
+                            ayt_mat,
+                            ayt_fiz,
+                            ayt_kim,
+                            ayt_bio,
+                            ayt_edeb,
+                            ayt_tar1,
+                            ayt_cog1,
+                            ayt_toplam,
+
+                            puan_say,
+                            puan_ea,
+                            puan_soz,
+
+                            ayt_toplam
+                        ))
+```
+
 
                 # PDF Okuma
                 reader = pypdf.PdfReader(pdf_file)
