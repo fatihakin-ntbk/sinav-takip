@@ -1424,7 +1424,7 @@ role_labels = {
 st.sidebar.markdown(f"### 👤 Kullanıcı: **{st.session_state['user_info']['username'].upper()}**")
 st.sidebar.markdown(f"🔑 Rol: **{role_labels.get(st.session_state['role'], 'Kullanıcı')}**")
 
-if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True):
+if st.sidebar.button("🚪 Çıkış Yap", use_container_width=True, key="cikis_yap_btn_1427"):
     st.session_state['logged_in'] = False
     st.session_state['role'] = None
     st.session_state['user_info'] = None
