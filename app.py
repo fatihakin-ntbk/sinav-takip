@@ -635,163 +635,107 @@ secim = st.sidebar.radio("Sistem Menüsü:", menu_options)
 # --- SAYFA SAYFA YÖNLENDİRMELER (IF - ELIF - ELSE ZİNCİRİ) ---
 
 # --- 0. MENÜ: SENE BAŞI ÖĞRENCİ LİSTESİ YÜKLE (ADMİN) ---
-if (
-    secim == "📂 Sene Başı Öğrenci Listesi Yükle"
-    and st.session_state["role"] == "admin"
-):
-  st.title("📂 Sene Başı Öğrenci Ana Listesi Yükleme Paneli")
-  st.info(
-      "💡 **Önemli:** Sene başında tüm öğrencilerinizi içeren tek bir Excel"
-      " dosyası yükleyin. Sistem öğrenci ve veli hesaplarını otomatik"
-      " oluşturacaktır."
-  )
+if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state['role'] == 'admin':
+    st.title("📂 Sene Başı Öğrenci Ana Listesi Yükleme Paneli")
+    st.info("💡 **Önemli:** Sene başında tüm öğrencilerinizi içeren tek bir Excel dosyası yükleyin. Sistem öğrenci ve veli hesaplarını otomatik oluşturacaktır.")
+    
+    # HAZIR EXCEL ŞABLONU İNDİRME BUTONU
+    sablon_veri = {
+        'Okul No': [917],
+        'Adı Soyadı': ['ASLI ÇAĞLAR'],
+        'öğrenci T.C. kimlik no': ['50383367498'],
+        'Sınıfı': ['9-A'],
+        'veli yakınlığı': ['Anne'],
+        'veli adı': ['AYSEL'],
+        'veli soyadı': ['ÇAĞLAR'],
+        'Veli Telefon': ['5056344447'],
+        'veli T.C. Kimlik no': ['50383367498']
+    }
+    df_sablon = pd.DataFrame(sablon_veri)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_sablon.to_excel(writer, index=False, sheet_name='Ogrenci_Listesi')
+    
+    st.download_button(
+        label="📥 Örnek Excel Şablonunu İndir",
+        data=buffer.getvalue(),
+        file_name="Ogrenci_Ana_Listesi_Sablonu.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Hata almamak için bu şablonu indirip verilerinizi yapıştırabilirsiniz."
+    )
+    
+    st.markdown("---")
+    
+    list_file = st.file_uploader("Öğrenci Ana Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
+    
+    if st.button("🚀 Ana Öğrenci Listesini Yükle ve Hesapları Oluştur", type="primary"):
+        if list_file:
+            try:
+                conn = sqlite3.connect("sinav_takip.db")
+                cursor = conn.cursor()
+                
+                df = pd.read_excel(list_file)
+                
+                # Sütun isimlerini esnek yakalamak için yardımcı fonksiyon
+                def get_val_from_row(row, possible_names, default=""):
+                    for col in row.index:
+                        col_norm = tr_normalize(str(col))
+                        for p in possible_names:
+                            if tr_normalize(p) in col_norm:
+                                val = row[col]
+                                if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None', 'NaN']:
+                                    return str(val).strip()
+                    return default
 
-  # HAZIR EXCEL ŞABLONU İNDİRME BUTONU
-  sablon_veri = {
-      "Okul No": [917],
-      "Adı Soyadı": ["ASLI ÇAĞLAR"],
-      "öğrenci T.C. kimlik no": ["50383367498"],
-      "Sınıfı": ["9-A"],
-      "veli yakınlığı": ["Anne"],
-      "veli adı": ["AYSEL"],
-      "veli soyadı": ["ÇAĞLAR"],
-      "Veli Telefon": ["5056344447"],
-      "veli T.C. Kimlik no": ["50383367498"],
-  }
-  df_sablon = pd.DataFrame(sablon_veri)
-  buffer = io.BytesIO()
-  with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    df_sablon.to_excel(writer, index=False, sheet_name="Ogrenci_Listesi")
+                eklenen_sayisi = 0
 
-  st.download_button(
-      label="📥 Örnek Excel Şablonunu İndir",
-      data=buffer.getvalue(),
-      file_name="Ogrenci_Ana_Listesi_Sablonu.xlsx",
-      mime=(
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      ),
-      help="Hata almamak için bu şablonu indirip verilerinizi yapıştırabilirsiniz.",
-  )
+                for _, row in df.iterrows():
+                    raw_name = get_val_from_row(row, ['Adı Soyadı', 'Ad Soyad', 'Öğrenci', 'Ogrenci', 'İsim', 'Isim', 'AD SOYAD'])
+                    if not raw_name or tr_normalize(raw_name) in ['NAN', 'NONE', '', 'OGRENCI', 'ADI SOYADI']:
+                        continue
+                    
+                    okul_no = get_val_from_row(row, ['Okul No', 'Numara', 'No', 'Ogrenci No'])
+                    sinif = get_val_from_row(row, ['Sınıfı', 'Sınıf', 'Sinif', 'Grup', 'Sınıf/Şube'])
+                    veli_tel = get_val_from_row(row, ['Veli Telefon', 'Telefon', 'Tel', 'GSM', 'Veli Tel'])
+                    
+                    norm_name = tr_normalize(raw_name)
 
-  st.markdown("---")
-
-  list_file = st.file_uploader(
-      "Öğrenci Ana Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"]
-  )
-
-  if st.button(
-      "🚀 Ana Öğrenci Listesini Yükle ve Hesapları Oluştur", type="primary"
-  ):
-    if list_file:
-      try:
-        conn = sqlite3.connect("sinav_takip.db")
-        cursor = conn.cursor()
-
-        df = pd.read_excel(list_file)
-
-        # Sütun isimlerini esnek yakalamak için yardımcı fonksiyon
-        def get_val_from_row(row, possible_names, default=""):
-          for col in row.index:
-            col_norm = tr_normalize(str(col))
-            for p in possible_names:
-              if tr_normalize(p) in col_norm:
-                val = row[col]
-                if pd.notna(val) and str(val).strip() not in [
-                    "",
-                    "nan",
-                    "None",
-                    "NaN",
-                ]:
-                  return str(val).strip()
-          return default
-
-        eklenen_sayisi = 0
-
-        for _, row in df.iterrows():
-          raw_name = get_val_from_row(
-              row,
-              [
-                  "Adı Soyadı",
-                  "Ad Soyad",
-                  "Öğrenci",
-                  "Ogrenci",
-                  "İsim",
-                  "Isim",
-                  "AD SOYAD",
-              ],
-          )
-          if not raw_name or tr_normalize(raw_name) in [
-              "NAN",
-              "NONE",
-              "",
-              "OGRENCI",
-              "ADI SOYADI",
-          ]:
-            continue
-
-          okul_no = get_val_from_row(
-              row, ["Okul No", "Numara", "No", "Ogrenci No"]
-          )
-          sinif = get_val_from_row(
-              row, ["Sınıfı", "Sınıf", "Sinif", "Grup", "Sınıf/Şube"]
-          )
-          veli_tel = get_val_from_row(
-              row, ["Veli Telefon", "Telefon", "Tel", "GSM", "Veli Tel"]
-          )
-
-          norm_name = tr_normalize(raw_name)
-
-          # Öğrenciler tablosuna ekle / güncelle
-          cursor.execute(
-              """
+                    # Öğrenciler tablosuna ekle / güncelle
+                    cursor.execute('''
                     INSERT INTO ogrenciler (okul_no, ad_soyad, ad_soyad_norm, sinif, veli_telefon)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(ad_soyad_norm) DO UPDATE SET
                         okul_no=COALESCE(NULLIF(excluded.okul_no, ''), ogrenciler.okul_no),
                         sinif=COALESCE(NULLIF(excluded.sinif, ''), ogrenciler.sinif),
                         veli_telefon=COALESCE(NULLIF(excluded.veli_telefon, ''), ogrenciler.veli_telefon)
-                    """,
-              (okul_no, raw_name, norm_name, sinif, veli_tel),
-          )
+                    ''', (okul_no, raw_name, norm_name, sinif, veli_tel))
 
-          # Otomatik Hesap Tanımlama (Varsayılan Şifre: 123456)
-          ogr_username = (
-              okul_no if okul_no else norm_name.lower().replace(" ", "")
-          )
-          veli_username = f"v_{ogr_username}"
+                    # Otomatik Hesap Tanımlama (Varsayılan Şifre: 123456)
+                    ogr_username = okul_no if okul_no else norm_name.lower().replace(" ", "")
+                    veli_username = f"v_{ogr_username}"
 
-          # Öğrenci Hesabı
-          cursor.execute(
-              """
+                    # Öğrenci Hesabı
+                    cursor.execute('''
                     INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon)
                     VALUES (?, '123456', 'ogrenci', ?, ?)
-                    """,
-              (ogr_username, norm_name, ""),
-          )
+                    ''', (ogr_username, norm_name, ""))
 
-          # Veli Hesabı
-          cursor.execute(
-              """
+                    # Veli Hesabı
+                    cursor.execute('''
                     INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon)
                     VALUES (?, '123456', 'veli', ?, ?)
-                    """,
-              (veli_username, norm_name, veli_tel),
-          )
+                    ''', (veli_username, norm_name, veli_tel))
 
-          eklenen_sayisi += 1
+                    eklenen_sayisi += 1
 
-        conn.commit()
-        conn.close()
-        st.success(
-            f"🎉 Ana liste başarıyla işlendi! Toplam **{eklenen_sayisi}**"
-            " öğrenci sisteme tanımlandı, öğrenci ve veli giriş hesapları"
-            " otomatik oluşturuldu."
-        )
+                conn.commit()
+                conn.close()
+                st.success(f"🎉 Ana liste başarıyla işlendi! Toplam **{eklenen_sayisi}** öğrenci sisteme tanımlandı, öğrenci ve veli giriş hesapları otomatik oluşturuldu.")
 
-      except Exception as e:
-        st.error(f"Listeyi yüklerken hata oluştu: {e}")
-    else:
-      st.warning("Lütfen bir Excel dosyası seçin.")
+            except Exception as e:
+                st.error(f"Listeyi yüklerken hata oluştu: {e}")
+        else:
+            st.warning("Lütfen bir Excel dosyası seçin.")
 
     st.markdown("---")
     st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
