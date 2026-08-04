@@ -789,7 +789,7 @@ if (
         )
 
       except Exception as e:
-        st.error(f"Listeyi yüklerken haimport streamlit as st
+        st.error(f"Listeyi yüklerken hata oluştu: {e}")
 import pandas as pd
 import sqlite3
 import pypdf
