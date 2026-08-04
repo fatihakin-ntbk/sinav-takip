@@ -779,30 +779,30 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                 df_raw = pd.read_excel(excel_file)
                 
-                header_row_idx = None
+                                header_row_idx = None
 
-for idx, row in df_raw.iterrows():
-    row_str_values = [
-        str(val).strip().upper()
-        for val in row.values
-        if pd.notna(val)
-    ]
+                for idx, row in df_raw.iterrows():
+                    row_str_values = [
+                        str(val).strip().upper()
+                        for val in row.values
+                        if pd.notna(val)
+                    ]
 
-    # Gerçek sütun başlığını bulmak için
-    # ÖĞRENCİ ve NUMARA aynı satırda bulunmalı.
-    has_student = any(
-        "ÖĞRENCİ" in val or "OGRENCI" in val
-        for val in row_str_values
-    )
+                    # ÖĞRENCİ ve NUMARA aynı satırda bulunan
+                    # gerçek başlık satırını bul.
+                    has_student = any(
+                        "ÖĞRENCİ" in val or "OGRENCI" in val
+                        for val in row_str_values
+                    )
 
-    has_number = any(
-        "NUMARA" in val or val == "NO"
-        for val in row_str_values
-    )
+                    has_number = any(
+                        "NUMARA" in val or val == "NO"
+                        for val in row_str_values
+                    )
 
-    if has_student and has_number:
-        header_row_idx = idx
-        break
+                    if has_student and has_number:
+                        header_row_idx = idx
+                        break
 
                 if header_row_idx is not None:
                     headers = [str(c).strip() if pd.notna(c) else '' for c in df_raw.iloc[header_row_idx].values]
