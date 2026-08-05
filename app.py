@@ -434,118 +434,431 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
 # --- ÖĞRENCİ KARNE BİLEŞENİ ---
 def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
     conn = sqlite3.connect("sinav_takip.db")
+
     query = '''
-    SELECT s.sinav_adi, s.tarih, s.sinav_turu, os.tyt_puan, os.kurum_sirasi, 
-           os.turkce_net, os.sosyal_net, os.matematik_net, os.fen_net, os.toplam_net,
-           os.ayt_mat_net, os.ayt_fizik_net, os.ayt_kimya_net, os.ayt_biyoloji_net,
-           os.ayt_edebiyat_net, os.ayt_tarih1_net, os.ayt_cog1_net, os.ayt_toplam_net,
-           os.ayt_say_puan, os.ayt_ea_puan, os.ayt_soz_puan, os.sinif
+    SELECT
+        s.sinav_adi,
+        s.tarih,
+        s.sinav_turu,
+        os.tyt_puan,
+        os.kurum_sirasi,
+
+        os.turkce_net,
+        os.sosyal_net,
+        os.matematik_net,
+        os.fen_net,
+        os.toplam_net,
+
+        os.ayt_mat_net,
+        os.ayt_fizik_net,
+        os.ayt_kimya_net,
+        os.ayt_biyoloji_net,
+        os.ayt_edebiyat_net,
+        os.ayt_tarih1_net,
+        os.ayt_cog1_net,
+        os.ayt_toplam_net,
+
+        os.ayt_say_puan,
+        os.ayt_ea_puan,
+        os.ayt_soz_puan,
+
+        os.sinif
     FROM ogrenci_sonuclari os
     JOIN sinavlar s ON os.sinav_id = s.sinav_id
     WHERE os.ogrenci_adi_norm = ?
     ORDER BY s.tarih ASC
     '''
-    df_ogr = pd.read_sql_query(query, conn, params=(secilen_norm,))
 
-    if not df_ogr.empty:
-        last_row = df_ogr.iloc[-1]
-        hedef_info = get_ogrenci_hedef(secilen_norm)
-        
-        if hedef_info and hedef_info['net'] > 0:
-            net_fark = last_row['toplam_net'] - hedef_info['net']
-            st.info(f"🎯 **Hedeflanan Üniversite / Bölüm:** {hedef_info['bolum']} | **Hedef Net:** {hedef_info['net']} Net")
-            c_h1, c_h2, c_h3 = st.columns(3)
-            c_h1.metric("Son Sınav Neti", f"{last_row['toplam_net']:.2f}")
-            c_h2.metric("Hedef Net", f"{hedef_info['net']:.2f}")
-            c_h3.metric("Hedefe Kalan / Net Açığı", f"{net_fark:+.2f}", delta=f"{net_fark:.2f}", delta_color="normal")
-            st.markdown("---")
+    df_ogr = pd.read_sql_query(
+        query,
+        conn,
+        params=(secilen_norm,)
+    )
 
-        col1, col2, col3, col4 = st.columns(4)
-        if last_row['sinav_turu'] == 'AYT':
-            col1.metric("Son AYT SAY Puanı", f"{last_row['ayt_say_puan']:.2f}")
+    if df_ogr.empty:
+        st.warning("Bu öğrenciye ait herhangi bir sınav verisi bulunamadı.")
+        conn.close()
+        return
+
+    # ==========================================================
+    # SON SINAV
+    # ==========================================================
+
+    last_row = df_ogr.iloc[-1]
+
+    sinav_turu = str(last_row["sinav_turu"]).upper().strip()
+
+    # ==========================================================
+    # HEDEF BİLGİSİ
+    # ==========================================================
+
+    hedef_info = get_ogrenci_hedef(secilen_norm)
+
+    if hedef_info and hedef_info["net"] > 0:
+
+        if sinav_turu == "AYT":
+            son_net = float(last_row["ayt_toplam_net"] or 0)
         else:
-            col1.metric("Son TYT Puanı", f"{last_row['tyt_puan']:.2f}")
+            son_net = float(last_row["toplam_net"] or 0)
 
-        col2.metric("Kurum Sırası", f"{int(last_row['kurum_sirasi'])}")
-        col3.metric("Son Toplam Net", f"{last_row['toplam_net']:.2f}")
-        col4.metric("Sınıfı", f"{last_row['sinif']}")
+        net_fark = son_net - hedef_info["net"]
 
-        st.markdown("---")
-        
-        c1, c2 = st.columns([1.1, 0.9])
-        
-        fig, ax = plt.subplots(figsize=(7, 3.5))
-        ax.plot(df_ogr['sinav_adi'], df_ogr['toplam_net'], marker='o', color='#2b5797', linewidth=2.5, label="Öğrenci Neti")
-        if hedef_info and hedef_info['net'] > 0:
-            ax.axhline(y=hedef_info['net'], color='r', linestyle='--', label=f"Hedef ({hedef_info['net']} Net)")
-        for i, txt in enumerate(df_ogr['toplam_net']):
-            ax.annotate(f"{txt:.1f}", (df_ogr['sinav_adi'][i], df_ogr['toplam_net'][i]+1), ha='center', fontweight='bold')
-        ax.set_ylabel("Net")
-        ax.grid(True, linestyle='--', alpha=0.5)
-        plt.xticks(rotation=15)
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        buf.seek(0)
-        fig_img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-
-        with c1:
-            st.subheader("📈 Net Gelişim Grafiği")
-            st.pyplot(fig)
-
-        with c2:
-            aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(conn, secilen_norm)
-            st.subheader("⚠️ Acil Müdahale Gereken Konular")
-            if aktif_eksikler:
-                for konu, tekrar in aktif_eksikler:
-                    st.error(f"📌 **{konu}** ({tekrar} Sınavda Yanlış)")
-            else:
-                st.success("🎉 Aktif eksik konu bulunmuyor!")
-
-            st.subheader("🎉 Başarıyla Halledilen Konular")
-            if tamamlanan_konular:
-                for konu in tamamlanan_konular:
-                    st.success(f"✅ **{konu}** (Son sınavda başarıyla çözüldü)")
-            else:
-                st.info("Henüz kazanılan konu kaydı bulunmuyor.")
-
-        st.markdown("---")
-        st.subheader("🤖 Yapay Zeka / Akıllı Sistem Haftalık Çalışma Önerisi")
-        ai_plan = generate_ai_study_plan(aktif_eksikler)
-        
-        if ai_plan["mesaj"]:
-            st.success(ai_plan["mesaj"])
-        else:
-            cols = st.columns(len(ai_plan["program"]))
-            for idx, p in enumerate(ai_plan["program"]):
-                with cols[idx]:
-                    st.markdown(f"**📌 Odak Konu:** {p['konu']}")
-                    st.caption(f"{p['oncelik']}")
-                    st.metric("Haftalık Hedef", f"{p['hedef_soru']} Soru")
-                    st.write(f"💡 *{p['tavsiye']}*")
-
-        st.markdown("---")
-        veli_notu = ""
-        if allow_notes:
-            veli_notu = st.text_area("✍️ Rehberlik / Öğretmen Veli Değerlendirme Notu (Karnede Görünür):", height=80)
-
-        html_report = generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, secilen_ogr_adi, fig_img_base64, veli_notu, hedef_info)
-        
-        st.download_button(
-            label=f"📄 {secilen_ogr_adi} Karne Raporunu İndir (PDF/HTML)",
-            data=html_report,
-            file_name=f"{secilen_norm}_Gelisim_Karnesi.html",
-            mime="text/html",
-            type="primary",
-            use_container_width=True
+        st.info(
+            f"🎯 **Hedeflenen Üniversite / Bölüm:** "
+            f"{hedef_info['bolum']} | "
+            f"**Hedef Net:** {hedef_info['net']} Net"
         )
 
-        st.subheader("📋 Sınav Geçmiş Tablosu")
-        st.dataframe(df_ogr, use_container_width=True)
-    else:
-        st.warning("Bu öğrenciye ait herhangi bir sınav verisi bulunamadı.")
-    conn.close()
+        c_h1, c_h2, c_h3 = st.columns(3)
 
+        c_h1.metric(
+            "Son Sınav Neti",
+            f"{son_net:.2f}"
+        )
+
+        c_h2.metric(
+            "Hedef Net",
+            f"{hedef_info['net']:.2f}"
+        )
+
+        c_h3.metric(
+            "Hedefe Kalan / Net Açığı",
+            f"{net_fark:+.2f}",
+            delta=f"{net_fark:.2f}",
+            delta_color="normal"
+        )
+
+        st.markdown("---")
+
+    # ==========================================================
+    # ÜST BİLGİ KARTLARI
+    # ==========================================================
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    if sinav_turu == "AYT":
+
+        col1.metric(
+            "Son AYT SAY Puanı",
+            f"{float(last_row['ayt_say_puan'] or 0):.2f}"
+        )
+
+        son_toplam_net = float(
+            last_row["ayt_toplam_net"] or 0
+        )
+
+    else:
+
+        col1.metric(
+            "Son TYT Puanı",
+            f"{float(last_row['tyt_puan'] or 0):.2f}"
+        )
+
+        son_toplam_net = float(
+            last_row["toplam_net"] or 0
+        )
+
+    col2.metric(
+        "Kurum Sırası",
+        f"{int(float(last_row['kurum_sirasi'] or 0))}"
+    )
+
+    col3.metric(
+        "Son Toplam Net",
+        f"{son_toplam_net:.2f}"
+    )
+
+    col4.metric(
+        "Sınıfı",
+        f"{last_row['sinif']}"
+    )
+
+    st.markdown("---")
+
+    # ==========================================================
+    # AYT SONUÇLARI
+    # ==========================================================
+
+    if sinav_turu == "AYT":
+
+        st.subheader("🎯 AYT Sonuçları")
+
+        ayt1, ayt2, ayt3, ayt4 = st.columns(4)
+
+        ayt1.metric(
+            "Matematik",
+            f"{float(last_row['ayt_mat_net'] or 0):.2f}"
+        )
+
+        ayt2.metric(
+            "Fizik",
+            f"{float(last_row['ayt_fizik_net'] or 0):.2f}"
+        )
+
+        ayt3.metric(
+            "Kimya",
+            f"{float(last_row['ayt_kimya_net'] or 0):.2f}"
+        )
+
+        ayt4.metric(
+            "Biyoloji",
+            f"{float(last_row['ayt_biyoloji_net'] or 0):.2f}"
+        )
+
+        ayt5, ayt6, ayt7, ayt8 = st.columns(4)
+
+        ayt5.metric(
+            "Edebiyat",
+            f"{float(last_row['ayt_edebiyat_net'] or 0):.2f}"
+        )
+
+        ayt6.metric(
+            "Tarih-1",
+            f"{float(last_row['ayt_tarih1_net'] or 0):.2f}"
+        )
+
+        ayt7.metric(
+            "Coğrafya-1",
+            f"{float(last_row['ayt_cog1_net'] or 0):.2f}"
+        )
+
+        ayt8.metric(
+            "AYT Toplam Net",
+            f"{float(last_row['ayt_toplam_net'] or 0):.2f}"
+        )
+
+        st.markdown("---")
+
+    # ==========================================================
+    # NET GELİŞİM GRAFİĞİ
+    # TYT ve AYT'yi birbirine karıştırmıyoruz.
+    # ==========================================================
+
+    df_grafik = df_ogr.copy()
+
+    df_grafik["grafik_net"] = df_grafik.apply(
+        lambda row:
+            float(row["ayt_toplam_net"] or 0)
+            if str(row["sinav_turu"]).upper().strip() == "AYT"
+            else float(row["toplam_net"] or 0),
+        axis=1
+    )
+
+    c1, c2 = st.columns([1.1, 0.9])
+
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+
+    ax.plot(
+        df_grafik["sinav_adi"],
+        df_grafik["grafik_net"],
+        marker="o",
+        linewidth=2.5,
+        label="Öğrenci Neti"
+    )
+
+    for i, txt in enumerate(df_grafik["grafik_net"]):
+        ax.annotate(
+            f"{txt:.1f}",
+            (
+                df_grafik["sinav_adi"].iloc[i],
+                txt + 1
+            ),
+            ha="center",
+            fontweight="bold"
+        )
+
+    ax.set_ylabel("Net")
+    ax.grid(True, linestyle="--", alpha=0.5)
+
+    plt.xticks(rotation=15)
+
+    buf = io.BytesIO()
+
+    plt.savefig(
+        buf,
+        format="png",
+        bbox_inches="tight"
+    )
+
+    buf.seek(0)
+
+    fig_img_base64 = base64.b64encode(
+        buf.getvalue()
+    ).decode("utf-8")
+
+    with c1:
+
+        st.subheader("📈 Net Gelişim Grafiği")
+
+        st.pyplot(fig)
+
+    # ==========================================================
+    # EKSİK KONULAR
+    # ==========================================================
+
+    with c2:
+
+        aktif_eksikler, tamamlanan_konular = get_ogrenci_eksik_durumu(
+            conn,
+            secilen_norm
+        )
+
+        st.subheader("⚠️ Acil Müdahale Gereken Konular")
+
+        if aktif_eksikler:
+
+            for konu, tekrar in aktif_eksikler:
+
+                st.error(
+                    f"📌 **{konu}** "
+                    f"({tekrar} Sınavda Yanlış)"
+                )
+
+        else:
+
+            st.success(
+                "🎉 Aktif eksik konu bulunmuyor!"
+            )
+
+        st.subheader(
+            "🎉 Başarıyla Halledilen Konular"
+        )
+
+        if tamamlanan_konular:
+
+            for konu in tamamlanan_konular:
+
+                st.success(
+                    f"✅ **{konu}** "
+                    "(Son sınavda başarıyla çözüldü)"
+                )
+
+        else:
+
+            st.info(
+                "Henüz kazanılan konu kaydı bulunmuyor."
+            )
+
+    st.markdown("---")
+
+    # ==========================================================
+    # YAPAY ZEKA ÇALIŞMA PLANI
+    # ==========================================================
+
+    st.subheader(
+        "🤖 Yapay Zeka / Akıllı Sistem Haftalık Çalışma Önerisi"
+    )
+
+    ai_plan = generate_ai_study_plan(
+        aktif_eksikler
+    )
+
+    if ai_plan["mesaj"]:
+
+        st.success(
+            ai_plan["mesaj"]
+        )
+
+    else:
+
+        cols = st.columns(
+            len(ai_plan["program"])
+        )
+
+        for idx, p in enumerate(
+            ai_plan["program"]
+        ):
+
+            with cols[idx]:
+
+                st.markdown(
+                    f"**📌 Odak Konu:** "
+                    f"{p['konu']}"
+                )
+
+                st.caption(
+                    f"{p['oncelik']}"
+                )
+
+                st.metric(
+                    "Haftalık Hedef",
+                    f"{p['hedef_soru']} Soru"
+                )
+
+                st.write(
+                    f"💡 *{p['tavsiye']}*"
+                )
+
+    st.markdown("---")
+
+    # ==========================================================
+    # VELİ / REHBERLİK NOTU
+    # ==========================================================
+
+    veli_notu = ""
+
+    if allow_notes:
+
+        veli_notu = st.text_area(
+            "✍️ Rehberlik / Öğretmen Veli "
+            "Değerlendirme Notu "
+            "(Karnede Görünür):",
+            height=80
+        )
+
+    # ==========================================================
+    # HTML KARNE
+    # ==========================================================
+
+    html_report = generate_student_html_report(
+        df_ogr,
+        aktif_eksikler,
+        tamamlanan_konular,
+        secilen_ogr_adi,
+        fig_img_base64,
+        veli_notu,
+        hedef_info
+    )
+
+    st.download_button(
+        label=(
+            f"📄 {secilen_ogr_adi} "
+            "Karne Raporunu İndir (PDF/HTML)"
+        ),
+        data=html_report,
+        file_name=(
+            f"{secilen_norm}_Gelisim_Karnesi.html"
+        ),
+        mime="text/html",
+        type="primary",
+        use_container_width=True
+    )
+
+    # ==========================================================
+    # SINAV GEÇMİŞİ
+    # ==========================================================
+
+    st.subheader(
+        "📋 Sınav Geçmiş Tablosu"
+    )
+
+    # Kullanıcıya daha temiz bir tablo göster
+    gecmis_df = df_ogr.copy()
+
+    gecmis_df["Gösterilecek Toplam Net"] = gecmis_df.apply(
+        lambda row:
+            row["ayt_toplam_net"]
+            if str(row["sinav_turu"]).upper().strip() == "AYT"
+            else row["toplam_net"],
+        axis=1
+    )
+
+    st.dataframe(
+        gecmis_df,
+        use_container_width=True
+    )
+
+    conn.close()
 # --- OTURUM YÖNETİMİ ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
