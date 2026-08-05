@@ -782,7 +782,7 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                 # AYT / TYT başlık satırını güvenli şekilde bul
                 # ==========================================================
 
-                df_raw = pd.read_excel(excel_file, header=None)
+                df = pd.read_excel(excel_file, header=8)
 
                 # ==========================================================
                 # EXCEL BAŞLIK SATIRINI OTOMATİK BUL
