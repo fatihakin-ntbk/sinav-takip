@@ -111,6 +111,20 @@ def init_db():
         FOREIGN KEY (sinav_id) REFERENCES sinavlar (sinav_id) ON DELETE CASCADE
     )''')
 
+    # Eksik konu tablosunu dinamik analiz için güncelle
+    cursor.execute("PRAGMA table_info(ogrenci_eksikleri)")
+    eksik_cols = [col[1] for col in cursor.fetchall()]
+    if 'konu_norm' not in eksik_cols:
+        cursor.execute("ALTER TABLE ogrenci_eksikleri ADD COLUMN konu_norm TEXT")
+
+    # Eski kayıtları da normalize ederek yeni dinamik yapıya dahil et
+    cursor.execute("SELECT id, konu_kazanim FROM ogrenci_eksikleri WHERE konu_norm IS NULL OR konu_norm = ''")
+    for eksik_id, konu in cursor.fetchall():
+        cursor.execute("UPDATE ogrenci_eksikleri SET konu_norm = ? WHERE id = ?", (tr_normalize(konu), eksik_id))
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_eksik_ogrenci_konu ON ogrenci_eksikleri (ogrenci_adi_norm, konu_norm)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_eksik_sinav_konu ON ogrenci_eksikleri (sinav_id, konu_norm)")
+
     # Kurum Bilgileri
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS kurum_ayarlari (
@@ -190,48 +204,60 @@ def get_kurum_bilgileri():
 
 # --- DİNAMİK EKSİK KONU SORGUSU ---
 def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
+    # Kazanım isimleri kod içine sabitlenmez; PDF'den gelen her yeni kazanım
+    # otomatik olarak geçmiş verilerle karşılaştırılır.
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT s.sinav_id 
+        SELECT s.sinav_id
         FROM sinavlar s
         JOIN ogrenci_sonuclari os ON s.sinav_id = os.sinav_id
         WHERE os.ogrenci_adi_norm = ?
-        ORDER BY s.tarih DESC, s.sinav_id DESC LIMIT 1
+        ORDER BY s.tarih DESC, s.sinav_id DESC
+        LIMIT 1
     ''', (ogrenci_norm_adi,))
-    
-    last_exam = cursor.fetchone()
-    if not last_exam:
+    row = cursor.fetchone()
+    if not row:
         return [], []
-    
-    last_sinav_id = last_exam[0]
-    
+
+    last_sinav_id = row[0]
+
+    # Son sınavdaki aktif yanlışlar ve aynı kazanımın kaç farklı sınavda tekrar ettiği.
     cursor.execute('''
-        SELECT konu_kazanim, COUNT(*) as toplam_tekrar
-        FROM ogrenci_eksikleri
-        WHERE ogrenci_adi_norm = ? 
-          AND konu_kazanim IN (
-              SELECT konu_kazanim 
-              FROM ogrenci_eksikleri 
-              WHERE ogrenci_adi_norm = ? AND sinav_id = ?
-          )
-        GROUP BY konu_kazanim
-        ORDER BY toplam_tekrar DESC
-    ''', (ogrenci_norm_adi, ogrenci_norm_adi, last_sinav_id))
-    
+        SELECT MIN(son.konu_kazanim) AS konu_kazanim,
+               COUNT(DISTINCT gecmis.sinav_id) AS tekrar_sayisi
+        FROM ogrenci_eksikleri son
+        JOIN ogrenci_eksikleri gecmis
+          ON gecmis.ogrenci_adi_norm = son.ogrenci_adi_norm
+         AND gecmis.konu_norm = son.konu_norm
+        WHERE son.ogrenci_adi_norm = ?
+          AND son.sinav_id = ?
+        GROUP BY son.konu_norm
+        ORDER BY tekrar_sayisi DESC, konu_kazanim ASC
+    ''', (ogrenci_norm_adi, last_sinav_id))
     aktif_eksikler = cursor.fetchall()
-    
+
+    # Bir eski eksik ancak son sınavda okul genelinde aynı kazanımdan yanlış
+    # kaydı varsa (yani kazanımın o sınavda sorulduğuna dair kanıt varsa) ve
+    # öğrenci o kazanımda yanlış yapmadıysa tamamlandı kabul edilir.
     cursor.execute('''
-        SELECT DISTINCT konu_kazanim
-        FROM ogrenci_eksikleri
-        WHERE ogrenci_adi_norm = ? 
-          AND konu_kazanim NOT IN (
-              SELECT konu_kazanim 
-              FROM ogrenci_eksikleri 
+        SELECT MIN(eski.konu_kazanim) AS konu_kazanim
+        FROM ogrenci_eksikleri eski
+        WHERE eski.ogrenci_adi_norm = ?
+          AND eski.sinav_id <> ?
+          AND eski.konu_norm IN (
+              SELECT DISTINCT konu_norm
+              FROM ogrenci_eksikleri
+              WHERE sinav_id = ?
+          )
+          AND eski.konu_norm NOT IN (
+              SELECT DISTINCT konu_norm
+              FROM ogrenci_eksikleri
               WHERE ogrenci_adi_norm = ? AND sinav_id = ?
           )
-    ''', (ogrenci_norm_adi, ogrenci_norm_adi, last_sinav_id))
-    
-    tamamlanan_konular = [row[0] for row in cursor.fetchall()]
+        GROUP BY eski.konu_norm
+        ORDER BY konu_kazanim ASC
+    ''', (ogrenci_norm_adi, last_sinav_id, last_sinav_id, ogrenci_norm_adi, last_sinav_id))
+    tamamlanan_konular = [r[0] for r in cursor.fetchall()]
     return aktif_eksikler, tamamlanan_konular
 
 # --- HEDEF GETİRME ---
@@ -1349,10 +1375,31 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                             if "ÜÇDÖRTBES" in konu_temiz or "TYT" in konu_temiz or "AYT" in konu_temiz or len(konu_temiz) < 2:
                                 continue
                             
+                            konu_norm = tr_normalize(konu_temiz)
+
+                            # Aynı sınavda aynı öğrenci/kazanım birden fazla kez yakalanırsa
+                            # tekrar sayısını şişirmemek için tek kayıt tut.
                             cursor.execute('''
-                            INSERT INTO ogrenci_eksikleri (sinav_id, ogrenci_adi, ogrenci_adi_norm, ders, konu_kazanim, soru_nolari)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            ''', (sinav_id, pdf_name, pdf_norm_name, "Genel", konu_temiz, sorular.strip()))
+                                SELECT id, soru_nolari
+                                FROM ogrenci_eksikleri
+                                WHERE sinav_id = ? AND ogrenci_adi_norm = ? AND konu_norm = ?
+                                LIMIT 1
+                            ''', (sinav_id, pdf_norm_name, konu_norm))
+                            mevcut = cursor.fetchone()
+
+                            if mevcut:
+                                eski_sorular = mevcut[1] or ""
+                                yeni_sorular = sorular.strip()
+                                birlesik = ", ".join(dict.fromkeys(
+                                    [x.strip() for x in (eski_sorular + "," + yeni_sorular).split(",") if x.strip()]
+                                ))
+                                cursor.execute("UPDATE ogrenci_eksikleri SET soru_nolari = ? WHERE id = ?", (birlesik, mevcut[0]))
+                            else:
+                                cursor.execute('''
+                                INSERT INTO ogrenci_eksikleri
+                                (sinav_id, ogrenci_adi, ogrenci_adi_norm, ders, konu_kazanim, konu_norm, soru_nolari)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ''', (sinav_id, pdf_name, pdf_norm_name, "Genel", konu_temiz, konu_norm, sorular.strip()))
 
                 conn.commit()
                 conn.close()
@@ -1671,10 +1718,27 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in 
         s_id = sinav_dict[secilen_s_label]
         
         if s_id == 0:
-            query = "SELECT konu_kazanim, COUNT(*) as 'Yanlış Yapan Öğrenci Sayısı' FROM ogrenci_eksikleri GROUP BY konu_kazanim ORDER BY COUNT(*) DESC LIMIT 20"
+            query = '''
+                SELECT MIN(konu_kazanim) AS konu_kazanim,
+                       COUNT(DISTINCT ogrenci_adi_norm) AS 'Yanlış Yapan Öğrenci Sayısı',
+                       COUNT(DISTINCT sinav_id) AS 'Görüldüğü Sınav Sayısı'
+                FROM ogrenci_eksikleri
+                WHERE konu_norm IS NOT NULL AND konu_norm != ''
+                GROUP BY konu_norm
+                ORDER BY COUNT(DISTINCT ogrenci_adi_norm) DESC, COUNT(DISTINCT sinav_id) DESC
+                LIMIT 20
+            '''
             df_eksik = pd.read_sql_query(query, conn)
         else:
-            query = "SELECT konu_kazanim, COUNT(*) as 'Yanlış Yapan Öğrenci Sayısı' FROM ogrenci_eksikleri WHERE sinav_id = ? GROUP BY konu_kazanim ORDER BY COUNT(*) DESC LIMIT 20"
+            query = '''
+                SELECT MIN(konu_kazanim) AS konu_kazanim,
+                       COUNT(DISTINCT ogrenci_adi_norm) AS 'Yanlış Yapan Öğrenci Sayısı'
+                FROM ogrenci_eksikleri
+                WHERE sinav_id = ? AND konu_norm IS NOT NULL AND konu_norm != ''
+                GROUP BY konu_norm
+                ORDER BY COUNT(DISTINCT ogrenci_adi_norm) DESC
+                LIMIT 20
+            '''
             df_eksik = pd.read_sql_query(query, conn, params=(s_id,))
             
         if not df_eksik.empty:
