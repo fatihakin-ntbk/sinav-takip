@@ -777,9 +777,14 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                 cursor.execute("SELECT sinav_id FROM sinavlar WHERE sinav_adi = ?", (sinav_adi,))
                 sinav_id = cursor.fetchone()[0]
 
-                df_raw = pd.read_excel(excel_file)
-                
-                                header_row_idx = None
+                # ==========================================================
+                # EXCEL OKUMA
+                # AYT / TYT başlık satırını güvenli şekilde bul
+                # ==========================================================
+
+                df_raw = pd.read_excel(excel_file, header=None)
+
+                header_row_idx = None
 
                 for idx, row in df_raw.iterrows():
                     row_str_values = [
@@ -788,8 +793,6 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         if pd.notna(val)
                     ]
 
-                    # ÖĞRENCİ ve NUMARA aynı satırda bulunan
-                    # gerçek başlık satırını bul.
                     has_student = any(
                         "ÖĞRENCİ" in val or "OGRENCI" in val
                         for val in row_str_values
@@ -804,26 +807,68 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         header_row_idx = idx
                         break
 
-                if header_row_idx is not None:
-                    headers = [str(c).strip() if pd.notna(c) else '' for c in df_raw.iloc[header_row_idx].values]
-                    df = df_raw.iloc[header_row_idx + 1:].copy()
-                    df.columns = headers
-                else:
-                    df = df_raw.copy()
+                if header_row_idx is None:
+                    st.error(
+                        "❌ Excel dosyasında 'Öğrenci' ve 'Numara' başlıklarının "
+                        "bulunduğu satır bulunamadı."
+                    )
+                    conn.rollback()
+                    conn.close()
+                    st.stop()
+
+                # Gerçek başlık satırını sütun adı olarak kullan
+                headers = [
+                    str(c).strip() if pd.notna(c) else ''
+                    for c in df_raw.iloc[header_row_idx].values
+                ]
+
+                df = df_raw.iloc[header_row_idx + 1:].copy()
+                df.columns = headers
+
+                # ==========================================================
+                # SÜTUN DEĞERİ OKUMA
+                # ==========================================================
 
                 def get_val(row, possible_names, default=0.0):
                     for name in possible_names:
+                        name_norm = str(name).strip().upper()
+
                         for col in row.index:
-                            if name.upper() in str(col).strip().upper():
+                            col_norm = str(col).strip().upper()
+
+                            if name_norm in col_norm:
                                 val = row[col]
-                                if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+
+                                if (
+                                    pd.notna(val)
+                                    and str(val).strip()
+                                    not in ['', 'nan', 'None', 'NaN']
+                                ):
                                     return val
+
                     return default
 
-                cursor.execute("SELECT okul_no, ad_soyad, ad_soyad_norm, sinif FROM ogrenciler")
+                # ==========================================================
+                # ANA ÖĞRENCİ LİSTESİ
+                # ==========================================================
+
+                cursor.execute(
+                    "SELECT okul_no, ad_soyad, ad_soyad_norm, sinif FROM ogrenciler"
+                )
+
                 ana_ogrenciler = cursor.fetchall()
-                dict_by_no = {str(o[0]): (o[1], o[2], o[3]) for o in ana_ogrenciler if o[0]}
-                dict_by_norm = {o[2]: (o[1], o[2], o[3]) for o in ana_ogrenciler}
+
+                dict_by_no = {
+                    str(o[0]).strip(): (o[1], o[2], o[3])
+                    for o in ana_ogrenciler
+                    if o[0] is not None
+                }
+
+                dict_by_norm = {
+                    o[2]: (o[1], o[2], o[3])
+                    for o in ana_ogrenciler
+                    if o[2]
+                }
 
                 for _, row in df.iterrows():
                     raw_name = get_val(row, ['Öğrenci', 'Ogrenci', 'Adı Soyadı', 'Ad Soyad'], default=None)
