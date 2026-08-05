@@ -784,37 +784,81 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                 df_raw = pd.read_excel(excel_file, header=None)
 
-                header_row_idx = None
+                # ==========================================================
+                # EXCEL BAŞLIK SATIRINI OTOMATİK BUL
+                # ==========================================================
 
-                for idx, row in df_raw.iterrows():
-                    row_str_values = [
-                        str(val).strip().upper()
+                header_row_idx = None
+                best_score = -1
+
+                for idx, row in df_raw.head(30).iterrows():
+
+                    row_values = [
+                        str(val).strip()
                         for val in row.values
                         if pd.notna(val)
                     ]
 
-                    has_student = any(
-                        "ÖĞRENCİ" in val or "OGRENCI" in val
-                        for val in row_str_values
-                    )
+                    row_text = " ".join(row_values).upper()
 
-                    has_number = any(
-                        "NUMARA" in val or val == "NO"
-                        for val in row_str_values
-                    )
+                    score = 0
 
-                    if has_student and has_number:
+                    # Öğrenci adı sütunu
+                    if "ÖĞRENCİ" in row_text or "OGRENCI" in row_text:
+                        score += 5
+
+                    # Numara / okul numarası
+                    if "NUMARA" in row_text:
+                        score += 4
+
+                    if "NO" in row_text:
+                        score += 2
+
+                    # Sınıf / grup
+                    if "GRUP" in row_text:
+                        score += 2
+
+                    if "SINIF" in row_text:
+                        score += 2
+
+                    # Alan
+                    if "ALAN" in row_text:
+                        score += 2
+
+                    # YKS sütunları
+                    if "YKS" in row_text:
+                        score += 2
+
+                    # En az öğrenci bilgisi bulunmalı
+                    if (
+                        ("ÖĞRENCİ" in row_text or "OGRENCI" in row_text)
+                        and score > best_score
+                    ):
+                        best_score = score
                         header_row_idx = idx
-                        break
 
                 if header_row_idx is None:
                     st.error(
-                        "❌ Excel dosyasında 'Öğrenci' ve 'Numara' başlıklarının "
-                        "bulunduğu satır bulunamadı."
+                        "❌ Excel'in ilk 30 satırında öğrenci başlık satırı bulunamadı."
                     )
                     conn.rollback()
                     conn.close()
                     st.stop()
+
+                # Gerçek başlık satırını sütun isimleri olarak kullan
+                headers = [
+                    str(c).strip() if pd.notna(c) else ''
+                    for c in df_raw.iloc[header_row_idx].values
+                ]
+
+                df = df_raw.iloc[header_row_idx + 1:].copy()
+                df.columns = headers
+
+                # Tanı bilgisi
+                st.info(
+                    f"📌 Excel başlık satırı bulundu: "
+                    f"{header_row_idx + 1}. satır"
+                )
 
                 # Gerçek başlık satırını sütun adı olarak kullan
                 headers = [
