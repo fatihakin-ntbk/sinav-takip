@@ -9,6 +9,30 @@ import matplotlib.pyplot as plt
 import numpy as np
 import io
 import urllib.parse
+import shutil
+from pathlib import Path
+
+# --- KALICI VERİTABANI YAPILANDIRMASI ---
+APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = APP_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "sinav_takip.db"
+
+# Eski sürüm veritabanını ilk çalıştırmada kalıcı data klasörüne kopyala.
+legacy_candidates = [APP_DIR / "sinav_takip.db", Path.cwd() / "sinav_takip.db"]
+if not DB_PATH.exists():
+    for legacy_db in legacy_candidates:
+        try:
+            if legacy_db.exists() and legacy_db.resolve() != DB_PATH.resolve():
+                shutil.copy2(legacy_db, DB_PATH)
+                break
+        except Exception:
+            pass
+
+def db_connect():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Sınav Takip & Analiz Paneli", page_icon="🎓", layout="wide")
@@ -25,7 +49,7 @@ def tr_normalize(text):
 
 # --- VERİTABANI OLUŞTURMA & GÜNCELLEME ---
 def init_db():
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
     # Ana Öğrenci Listesi Tablosu
@@ -53,6 +77,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS ogrenci_sonuclari (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sinav_id INTEGER,
+        ogrenci_id INTEGER,
         ogrenci_no TEXT,
         ogrenci_adi TEXT,
         ogrenci_adi_norm TEXT,
@@ -86,6 +111,9 @@ def init_db():
 
     cursor.execute("PRAGMA table_info(ogrenci_sonuclari)")
     os_cols = [col[1] for col in cursor.fetchall()]
+    if 'ogrenci_id' not in os_cols:
+        cursor.execute("ALTER TABLE ogrenci_sonuclari ADD COLUMN ogrenci_id INTEGER")
+        os_cols.append('ogrenci_id')
     ayt_cols = [
         ('ayt_mat_net', 'REAL DEFAULT 0'), ('ayt_fizik_net', 'REAL DEFAULT 0'),
         ('ayt_kimya_net', 'REAL DEFAULT 0'), ('ayt_biyoloji_net', 'REAL DEFAULT 0'),
@@ -103,6 +131,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS ogrenci_eksikleri (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sinav_id INTEGER,
+        ogrenci_id INTEGER,
         ogrenci_adi TEXT,
         ogrenci_adi_norm TEXT,
         ders TEXT,
@@ -114,6 +143,9 @@ def init_db():
     # Eksik konu tablosunu dinamik analiz için güncelle
     cursor.execute("PRAGMA table_info(ogrenci_eksikleri)")
     eksik_cols = [col[1] for col in cursor.fetchall()]
+    if 'ogrenci_id' not in eksik_cols:
+        cursor.execute("ALTER TABLE ogrenci_eksikleri ADD COLUMN ogrenci_id INTEGER")
+        eksik_cols.append('ogrenci_id')
     if 'konu_norm' not in eksik_cols:
         cursor.execute("ALTER TABLE ogrenci_eksikleri ADD COLUMN konu_norm TEXT")
 
@@ -140,6 +172,7 @@ def init_db():
         kullanici_adi TEXT UNIQUE,
         sifre TEXT,
         rol TEXT,
+        ogrenci_id INTEGER,
         ogrenci_adi_norm TEXT,
         telefon TEXT
     )''')
@@ -148,6 +181,7 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ogrenci_hedefleri (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ogrenci_id INTEGER,
         ogrenci_adi_norm TEXT UNIQUE,
         hedef_bolum TEXT,
         hedef_net REAL,
@@ -170,12 +204,42 @@ def init_db():
     CREATE TABLE IF NOT EXISTS odev_takip (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         odev_id INTEGER,
+        ogrenci_id INTEGER,
         ogrenci_adi_norm TEXT,
         durum TEXT DEFAULT 'Bekliyor',
         aciklama TEXT,
         FOREIGN KEY (odev_id) REFERENCES odevler (odev_id) ON DELETE CASCADE,
         UNIQUE(odev_id, ogrenci_adi_norm)
     )''')
+
+    # --- KALICI ÖĞRENCİ ID GEÇİŞİ (ESKİ DB UYUMLU) ---
+    for tablo in ["kullanicilar", "ogrenci_hedefleri", "odev_takip"]:
+        cursor.execute(f"PRAGMA table_info({tablo})")
+        tcols = [c[1] for c in cursor.fetchall()]
+        if "ogrenci_id" not in tcols:
+            cursor.execute(f"ALTER TABLE {tablo} ADD COLUMN ogrenci_id INTEGER")
+
+    cursor.execute("""
+        UPDATE ogrenci_sonuclari
+        SET ogrenci_id = (SELECT o.ogrenci_id FROM ogrenciler o
+            WHERE (o.okul_no IS NOT NULL AND o.okul_no != '' AND o.okul_no = ogrenci_sonuclari.ogrenci_no)
+               OR o.ad_soyad_norm = ogrenci_sonuclari.ogrenci_adi_norm LIMIT 1)
+        WHERE ogrenci_id IS NULL
+    """)
+    cursor.execute("""
+        UPDATE ogrenci_eksikleri
+        SET ogrenci_id = (SELECT o.ogrenci_id FROM ogrenciler o WHERE o.ad_soyad_norm = ogrenci_eksikleri.ogrenci_adi_norm LIMIT 1)
+        WHERE ogrenci_id IS NULL
+    """)
+    for tablo in ["kullanicilar", "ogrenci_hedefleri", "odev_takip"]:
+        cursor.execute(f"""
+            UPDATE {tablo}
+            SET ogrenci_id = (SELECT o.ogrenci_id FROM ogrenciler o WHERE o.ad_soyad_norm = {tablo}.ogrenci_adi_norm LIMIT 1)
+            WHERE ogrenci_id IS NULL AND ogrenci_adi_norm IS NOT NULL
+        """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sonuc_ogrenci_id ON ogrenci_sonuclari (ogrenci_id, sinav_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_eksik_ogrenci_id ON ogrenci_eksikleri (ogrenci_id, sinav_id, konu_norm)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kullanici_ogrenci_id ON kullanicilar (ogrenci_id)")
 
     # Varsayılan Hesaplar
     cursor.execute("SELECT * FROM kullanicilar WHERE kullanici_adi = 'admin'")
@@ -193,7 +257,7 @@ init_db()
 
 # --- KURUM BİLGİLERİ ---
 def get_kurum_bilgileri():
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute("SELECT kurum_adi, logo_base64 FROM kurum_ayarlari WHERE id = 1")
     row = cursor.fetchone()
@@ -262,7 +326,7 @@ def get_ogrenci_eksik_durumu(conn, ogrenci_norm_adi):
 
 # --- HEDEF GETİRME ---
 def get_ogrenci_hedef(ogrenci_norm_adi):
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute("SELECT hedef_bolum, hedef_net, hedef_puan FROM ogrenci_hedefleri WHERE ogrenci_adi_norm = ?", (ogrenci_norm_adi,))
     row = cursor.fetchone()
@@ -459,7 +523,7 @@ def generate_student_html_report(df_ogr, aktif_eksikler, tamamlanan_konular, stu
 
 # --- ÖĞRENCİ KARNE BİLEŞENİ ---
 def render_student_report(secilen_norm, secilen_ogr_adi, allow_notes=True):
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
 
     query = '''
     SELECT
@@ -902,16 +966,16 @@ def login_screen():
             submit = st.form_submit_button("Giriş Yap", type="primary", use_container_width=True)
 
             if submit:
-                conn = sqlite3.connect("sinav_takip.db")
+                conn = db_connect()
                 cursor = conn.cursor()
-                cursor.execute("SELECT rol, ogrenci_adi_norm, kullanici_adi FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", (username.strip(), password.strip()))
+                cursor.execute("SELECT rol, ogrenci_adi_norm, kullanici_adi, ogrenci_id FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", (username.strip(), password.strip()))
                 user = cursor.fetchone()
                 conn.close()
 
                 if user:
                     st.session_state['logged_in'] = True
                     st.session_state['role'] = user[0] 
-                    st.session_state['user_info'] = {'username': user[2], 'norm_adi': user[1]}
+                    st.session_state['user_info'] = {'username': user[2], 'norm_adi': user[1], 'ogrenci_id': user[3]}
                     st.success("Giriş başarılı!")
                     st.rerun()
                 else:
@@ -953,7 +1017,7 @@ with st.sidebar.expander("🔒 Şifremi Değiştir"):
             elif new_pass != confirm_pass:
                 st.error("Yeni şifreler eşleşmiyor!")
             else:
-                conn = sqlite3.connect("sinav_takip.db")
+                conn = db_connect()
                 cursor = conn.cursor()
                 cursor.execute("SELECT id FROM kullanicilar WHERE kullanici_adi = ? AND sifre = ?", 
                                (st.session_state['user_info']['username'], old_pass.strip()))
@@ -967,6 +1031,7 @@ with st.sidebar.expander("🔒 Şifremi Değiştir"):
                 conn.close()
 
 st.sidebar.markdown("---")
+st.sidebar.caption("🗄️ Kalıcı veritabanı: data/sinav_takip.db")
 
 # --- ROL BAZLI MENÜ DÜZENLEMESİ ---
 if st.session_state['role'] == 'admin':
@@ -982,6 +1047,7 @@ if st.session_state['role'] == 'admin':
         "🔥 Okul Konu/Kazanım Analizi", 
         "👥 Öğrenci & Veli Hesap Yönetimi",
         "⚙️ Kurum Ayarları & Logo",
+        "💾 Veritabanı & Yedek",
         "🗑️ Sınav Yönetimi & Silme"
     ]
 elif st.session_state['role'] == 'ogretmen':
@@ -1034,7 +1100,7 @@ if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state["ro
     if st.button("🚀 Ana Öğrenci Listesini Yükle ve Hesapları Oluştur", type="primary"):
         if list_file:
             try:
-                conn = sqlite3.connect("sinav_takip.db")
+                conn = db_connect()
                 cursor = conn.cursor()
                 df = pd.read_excel(list_file)
 
@@ -1068,11 +1134,13 @@ if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state["ro
                         veli_telefon=COALESCE(NULLIF(excluded.veli_telefon, ''), ogrenciler.veli_telefon)
                     ''', (okul_no, raw_name, norm_name, sinif, veli_tel))
 
+                    cursor.execute("SELECT ogrenci_id FROM ogrenciler WHERE ad_soyad_norm = ?", (norm_name,))
+                    ogrenci_id = cursor.fetchone()[0]
                     ogr_username = okul_no if okul_no else norm_name.lower().replace(" ", "")
                     veli_username = f"v_{ogr_username}"
-
-                    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, '123456', 'ogrenci', ?, '')", (ogr_username, norm_name))
-                    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_adi_norm, telefon) VALUES (?, '123456', 'veli', ?, ?)", (veli_username, norm_name, veli_tel))
+                    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_id, ogrenci_adi_norm, telefon) VALUES (?, '123456', 'ogrenci', ?, ?, '')", (ogr_username, ogrenci_id, norm_name))
+                    cursor.execute("INSERT OR IGNORE INTO kullanicilar (kullanici_adi, sifre, rol, ogrenci_id, ogrenci_adi_norm, telefon) VALUES (?, '123456', 'veli', ?, ?, ?)", (veli_username, ogrenci_id, norm_name, veli_tel))
+                    cursor.execute("UPDATE kullanicilar SET ogrenci_id=?, ogrenci_adi_norm=? WHERE kullanici_adi IN (?, ?)", (ogrenci_id, norm_name, ogr_username, veli_username))
                     eklenen_sayisi += 1
 
                 conn.commit()
@@ -1085,7 +1153,7 @@ if secim == "📂 Sene Başı Öğrenci Listesi Yükle" and st.session_state["ro
 
     st.markdown("---")
     st.subheader("📋 Sistemde Kayıtlı Ana Öğrenci Listesi")
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     df_ana_liste = pd.read_sql_query("SELECT okul_no as 'Okul No', ad_soyad as 'Adı Soyadı', sinif as 'Sınıf', veli_telefon as 'Veli Telefon' FROM ogrenciler ORDER BY sinif, ad_soyad", conn)
     conn.close()
     if not df_ana_liste.empty:
@@ -1109,7 +1177,7 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
     if st.button("🚀 Sınavı Veritabanına İşle ve Analiz Et", type="primary"):
         if sinav_adi and excel_file and pdf_file:
             try:
-                conn = sqlite3.connect("sinav_takip.db")
+                conn = db_connect()
                 cursor = conn.cursor()
 
                 cursor.execute("INSERT OR IGNORE INTO sinavlar (sinav_adi, tarih, sinav_turu) VALUES (?, ?, ?)", (sinav_adi, str(sinav_tarihi), sinav_turu))
@@ -1148,22 +1216,13 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                 # ==========================================================
 
                 cursor.execute(
-                    "SELECT okul_no, ad_soyad, ad_soyad_norm, sinif FROM ogrenciler"
+                    "SELECT ogrenci_id, okul_no, ad_soyad, ad_soyad_norm, sinif FROM ogrenciler"
                 )
 
                 ana_ogrenciler = cursor.fetchall()
 
-                dict_by_no = {
-                    str(o[0]).strip(): (o[1], o[2], o[3])
-                    for o in ana_ogrenciler
-                    if o[0] is not None
-                }
-
-                dict_by_norm = {
-                    o[2]: (o[1], o[2], o[3])
-                    for o in ana_ogrenciler
-                    if o[2]
-                }
+                dict_by_no = {str(o[1]).strip(): (o[0], o[2], o[3], o[4]) for o in ana_ogrenciler if o[1] is not None}
+                dict_by_norm = {o[3]: (o[0], o[2], o[3], o[4]) for o in ana_ogrenciler if o[3]}
 
                 for _, row in df.iterrows():
                     raw_name = get_val(row, ['Öğrenci', 'Ogrenci', 'Adı Soyadı', 'Ad Soyad'], default=None)
@@ -1174,16 +1233,18 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                     norm_name = tr_normalize(raw_name)
                     numara = str(get_val(row, ['Numara', 'No'], default='')).strip()
 
+                    matched_id = None
                     matched_name = raw_name
                     matched_norm = norm_name
                     grup = str(get_val(row, ['Grup', 'Sınıf', 'Sinif'], default=''))
-
                     if numara in dict_by_no:
-                        matched_name, matched_norm, matched_sinif = dict_by_no[numara]
+                        matched_id, matched_name, matched_norm, matched_sinif = dict_by_no[numara]
                         if matched_sinif: grup = matched_sinif
                     elif norm_name in dict_by_norm:
-                        matched_name, matched_norm, matched_sinif = dict_by_norm[norm_name]
+                        matched_id, matched_name, matched_norm, matched_sinif = dict_by_norm[norm_name]
                         if matched_sinif: grup = matched_sinif
+                    else:
+                        continue  # Ana listede olmayan öğrenciye sınav sonucu yükleme.
 
                     sira = int(float(get_val(row, ['YKS TYT K.B.', 'K.B.', 'Kurum Sıra', 'Sıra'], default=0)))
 
@@ -1197,9 +1258,9 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                         cursor.execute('''
                         INSERT INTO ogrenci_sonuclari 
-                        (sinav_id, ogrenci_no, ogrenci_adi, ogrenci_adi_norm, sinif, tyt_puan, kurum_sirasi, turkce_net, sosyal_net, matematik_net, fen_net, toplam_net)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (sinav_id, numara, matched_name, matched_norm, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
+                        (sinav_id, ogrenci_id, ogrenci_no, ogrenci_adi, ogrenci_adi_norm, sinif, tyt_puan, kurum_sirasi, turkce_net, sosyal_net, matematik_net, fen_net, toplam_net)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (sinav_id, matched_id, numara, matched_name, matched_norm, grup, puan, sira, turkce, sosyal, mat, fen, toplam))
 
                     else: # AYT SINAVI
                         # ==========================================================
@@ -1303,6 +1364,7 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         INSERT INTO ogrenci_sonuclari
                         (
                             sinav_id,
+                            ogrenci_id,
                             ogrenci_no,
                             ogrenci_adi,
                             ogrenci_adi_norm,
@@ -1324,10 +1386,11 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 
                             toplam_net
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''',
                         (
                             sinav_id,
+                            matched_id,
                             numara,
                             matched_name,
                             matched_norm,
@@ -1366,8 +1429,11 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                         pdf_name = header_match.group(3).strip().split('\n')[0]
                         pdf_norm_name = tr_normalize(pdf_name)
                         
+                        pdf_ogrenci_id = None
                         if pdf_norm_name in dict_by_norm:
-                            pdf_name, pdf_norm_name, _ = dict_by_norm[pdf_norm_name]
+                            pdf_ogrenci_id, pdf_name, pdf_norm_name, _ = dict_by_norm[pdf_norm_name]
+                        else:
+                            continue
 
                         matches = re.findall(r'\d+\s*-\s*([^(]+)\(([^)]+)\)', block)
                         for konu, sorular in matches:
@@ -1397,9 +1463,9 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
                             else:
                                 cursor.execute('''
                                 INSERT INTO ogrenci_eksikleri
-                                (sinav_id, ogrenci_adi, ogrenci_adi_norm, ders, konu_kazanim, konu_norm, soru_nolari)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ''', (sinav_id, pdf_name, pdf_norm_name, "Genel", konu_temiz, konu_norm, sorular.strip()))
+                                (sinav_id, ogrenci_id, ogrenci_adi, ogrenci_adi_norm, ders, konu_kazanim, konu_norm, soru_nolari)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ''', (sinav_id, pdf_ogrenci_id, pdf_name, pdf_norm_name, "Genel", konu_temiz, konu_norm, sorular.strip()))
 
                 conn.commit()
                 conn.close()
@@ -1412,7 +1478,7 @@ elif secim == "📤 Yeni Sınav Yükle" and st.session_state['role'] == 'admin':
 elif secim == "📊 Öğrenci Karneleri & Analiz" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🎓 Öğrenci Analiz Karnesi")
 
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute("SELECT DISTINCT sinif FROM ogrenci_sonuclari ORDER BY sinif ASC")
@@ -1441,7 +1507,7 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
     
     tab1, tab2 = st.tabs(["➕ Yeni Ödev Tanımla", "📋 Ödev Takibi & Durum Güncelleme"])
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
     with tab1:
@@ -1466,11 +1532,11 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
                                    (target_sinif, ders_adi, konu_kaynak, str(son_tarih), bugun))
                     odev_id = cursor.lastrowid
                     
-                    cursor.execute("SELECT ad_soyad_norm FROM ogrenciler WHERE sinif = ?", (target_sinif,))
+                    cursor.execute("SELECT ogrenci_id, ad_soyad_norm FROM ogrenciler WHERE sinif = ?", (target_sinif,))
                     sinif_ogrencileri = cursor.fetchall()
                     for ogr in sinif_ogrencileri:
-                        cursor.execute("INSERT OR IGNORE INTO odev_takip (odev_id, ogrenci_adi_norm, durum) VALUES (?, ?, 'Bekliyor')",
-                                       (odev_id, ogr[0]))
+                        cursor.execute("INSERT OR IGNORE INTO odev_takip (odev_id, ogrenci_id, ogrenci_adi_norm, durum) VALUES (?, ?, ?, 'Bekliyor')",
+                                       (odev_id, ogr[0], ogr[1]))
                     conn.commit()
                     st.success(f"✅ Ödev {target_sinif} sınıfındaki {len(sinif_ogrencileri)} öğrenciye tanımlandı!")
                 else:
@@ -1526,7 +1592,7 @@ elif secim == "📚 Ödev & Soru Bankası Takibi" and st.session_state['role'] i
 elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("📱 Veli Bilgilendirme & Otomatik WhatsApp Mesaj Paneli")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
     cursor.execute("SELECT DISTINCT sinif FROM ogrenciler ORDER BY sinif ASC")
@@ -1548,7 +1614,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
         secilen_norm, raw_tel, raw_name = ogr_map[secilen_ogr_key]
 
         # Son sınav neti ve eksikleri al
-        conn = sqlite3.connect("sinav_takip.db")
+        conn = db_connect()
         df_last = pd.read_sql_query("SELECT * FROM ogrenci_sonuclari WHERE ogrenci_adi_norm = ? ORDER BY id DESC LIMIT 1", conn, params=(secilen_norm,))
         aktif_eksikler, _ = get_ogrenci_eksik_durumu(conn, secilen_norm)
         conn.close()
@@ -1584,7 +1650,7 @@ elif secim == "📱 Veli Bilgilendirme & WhatsApp/SMS" and st.session_state['rol
 elif secim == "🎯 Hedef Belirleme & Takip" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🎯 Öğrenci Hedef Belirleme & Net Takip Paneli")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute("SELECT ad_soyad, ad_soyad_norm, sinif FROM ogrenciler ORDER BY ad_soyad ASC")
     ogr_list = cursor.fetchall()
@@ -1625,7 +1691,7 @@ elif secim == "🎯 Hedef Belirleme & Takip" and st.session_state['role'] in ['a
 elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🏫 Okul / Kurum Genel Derece & Başarı Paneli")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     df_sinavlar = pd.read_sql_query("SELECT sinav_id, sinav_adi, sinav_turu FROM sinavlar ORDER BY sinav_id DESC", conn)
     
     if not df_sinavlar.empty:
@@ -1660,7 +1726,7 @@ elif secim == "🏫 Okul Genel Durumu & Dereceler" and st.session_state['role'] 
 elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🕸️ Sınıf Karşılaştırmalı Ders Analiz Paneli")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     df_sinavlar = pd.read_sql_query("SELECT sinav_id, sinav_adi FROM sinavlar ORDER BY sinav_id DESC", conn)
     
     if not df_sinavlar.empty:
@@ -1706,7 +1772,7 @@ elif secim == "🕸️ Sınıf Karşılaştırmalı Radar & Dağılım" and st.s
 elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in ['admin', 'ogretmen']:
     st.title("🔥 Okul Genel Konu / Kazanım Eksik Analizi")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     df_sinavlar = pd.read_sql_query("SELECT sinav_id, sinav_adi FROM sinavlar ORDER BY sinav_id DESC", conn)
     
     if not df_sinavlar.empty:
@@ -1762,10 +1828,10 @@ elif secim == "🔥 Okul Konu/Kazanım Analizi" and st.session_state['role'] in 
 elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role'] == 'admin':
     st.title("👥 Öğrenci & Veli Kullanıcı Hesap Yönetimi")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
-    df_users = pd.read_sql_query("SELECT id, kullanici_adi as 'Kullanıcı Adı', sifre as 'Şifre', rol as 'Rol', ogrenci_adi_norm as 'İlişkili Öğrenci' FROM kullanicilar ORDER BY rol, kullanici_adi", conn)
+    df_users = pd.read_sql_query("SELECT id, kullanici_adi as 'Kullanıcı Adı', sifre as 'Şifre', rol as 'Rol', ogrenci_id as 'Öğrenci ID', ogrenci_adi_norm as 'İlişkili Öğrenci' FROM kullanicilar ORDER BY rol, kullanici_adi", conn)
     st.dataframe(df_users, use_container_width=True)
     
     st.markdown("---")
@@ -1785,7 +1851,7 @@ elif secim == "👥 Öğrenci & Veli Hesap Yönetimi" and st.session_state['role
 elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'admin':
     st.title("⚙️ Kurum Ayarları & Logo Yönetimi")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
     mevcut_adi, mevcut_logo = get_kurum_bilgileri()
@@ -1808,11 +1874,27 @@ elif secim == "⚙️ Kurum Ayarları & Logo" and st.session_state['role'] == 'a
             st.rerun()
     conn.close()
 
+# --- VERİTABANI & YEDEK ---
+elif secim == "💾 Veritabanı & Yedek" and st.session_state['role'] == 'admin':
+    st.title("💾 Kalıcı Veritabanı & Yedekleme")
+    st.success(f"Aktif veritabanı: {DB_PATH}")
+    conn = db_connect(); cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM ogrenciler"); ogr_say = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM sinavlar WHERE UPPER(sinav_turu)='TYT'"); tyt_say = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM sinavlar WHERE UPPER(sinav_turu)='AYT'"); ayt_say = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM ogrenci_sonuclari"); sonuc_say = cursor.fetchone()[0]
+    conn.close()
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("Kayıtlı Öğrenci",ogr_say); c2.metric("TYT Sınavı",tyt_say); c3.metric("AYT Sınavı",ayt_say); c4.metric("Sonuç Kaydı",sonuc_say)
+    st.info("Bu tek veritabanı öğrencileri, TYT/AYT sınavlarını, kazanımları, hesapları, hedefleri ve ödevleri birlikte saklar. Yeni app sürümlerinde data klasörünü koruyun.")
+    if DB_PATH.exists():
+        st.download_button("📥 Veritabanı Yedeğini İndir", data=DB_PATH.read_bytes(), file_name="sinav_takip_yedek.db", mime="application/octet-stream", use_container_width=True)
+
 # --- 11. MENÜ: SINAV YÖNETİMİ & SİLME ---
 elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] == 'admin':
     st.title("🗑️ Sınav Yönetimi & Silme Paneli")
     
-    conn = sqlite3.connect("sinav_takip.db")
+    conn = db_connect()
     cursor = conn.cursor()
     
     df_sinavlar = pd.read_sql_query("SELECT sinav_id, sinav_adi, tarih, sinav_turu FROM sinavlar ORDER BY sinav_id DESC", conn)
@@ -1826,9 +1908,9 @@ elif secim == "🗑️ Sınav Yönetimi & Silme" and st.session_state['role'] ==
         secilen_del_id = sinav_dict[secilen_del_label]
         
         if st.button("❌ Seçilen Sınavı ve Tüm Verilerini Sil", type="primary"):
-            cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (secilen_del_id,))
-            cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (secilen_del_id,))
             cursor.execute("DELETE FROM ogrenci_eksikleri WHERE sinav_id = ?", (secilen_del_id,))
+            cursor.execute("DELETE FROM ogrenci_sonuclari WHERE sinav_id = ?", (secilen_del_id,))
+            cursor.execute("DELETE FROM sinavlar WHERE sinav_id = ?", (secilen_del_id,))
             conn.commit()
             st.success("✅ Sınav ve ilgili tüm analiz verileri başarıyla silindi!")
             st.rerun()
@@ -1850,7 +1932,7 @@ elif secim == "📚 Ödevlerim & Ödev Durumu":
     norm_name = st.session_state['user_info']['norm_adi']
     
     if norm_name:
-        conn = sqlite3.connect("sinav_takip.db")
+        conn = db_connect()
         df_my_odev = pd.read_sql_query('''
             SELECT o.ders as 'Ders', o.konu_kaynak as 'Ödev Konusu / Kaynak', 
                    o.son_tarih as 'Son Teslim Tarihi', ot.durum as 'Durum', ot.aciklama as 'Öğretmen Notu'
